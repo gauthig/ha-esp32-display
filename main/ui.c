@@ -23,6 +23,7 @@
 
 #include "esp_log.h"
 #include "lvgl.h"
+#include "board.h"
 
 static const char *TAG = "ui";
 
@@ -105,6 +106,12 @@ static struct {
 
 static bool s_connected = false;
 
+/* ---------------------------------------------------- Backlight dim timer */
+#define DIM_TIMEOUT_MS  (5UL * 60UL * 1000UL)  /* dim after 5 min idle */
+#define DIM_PERCENT     10                       /* dim to 10% — still viewable */
+
+static bool s_dimmed = false;
+
 /* ========================================================= Helpers ===== */
 
 static lv_obj_t *make_card(lv_obj_t *parent, int x, int y, int w, int h)
@@ -155,6 +162,20 @@ static lv_obj_t *make_bar(lv_obj_t *parent, int x, int y, int w, int h,
 }
 
 /* ======================================================= ui_init ======== */
+
+static void dimmer_cb(lv_timer_t *t)
+{
+    (void)t;
+    lv_display_t *disp = lv_display_get_default();
+    uint32_t idle_ms = lv_display_get_inactive_time(disp);
+    if (!s_dimmed && idle_ms >= DIM_TIMEOUT_MS) {
+        board_backlight_set_percent(DIM_PERCENT);
+        s_dimmed = true;
+    } else if (s_dimmed && idle_ms < DIM_TIMEOUT_MS) {
+        board_backlight_set_percent(100);
+        s_dimmed = false;
+    }
+}
 
 static void clock_tick_cb(lv_timer_t *t)
 {
@@ -265,7 +286,7 @@ void ui_init(void)
 
     /* ---- Top consumer card -------------------------------------------- */
     lv_obj_t *top_card = make_card(scr, TOP_X, TOP_Y, TOP_W, TOP_H);
-    make_label(top_card, "TOP CONSUMER", &lv_font_montserrat_14, C_TXT2,
+    make_label(top_card, "TOP LOCATION", &lv_font_montserrat_14, C_TXT2,
                LV_ALIGN_TOP_LEFT, 0, 0);
 
     s_top_name = lv_label_create(top_card);
@@ -318,6 +339,9 @@ void ui_init(void)
 
     /* ---- Clock timer -------------------------------------------------- */
     lv_timer_create(clock_tick_cb, 1000, NULL);
+
+    /* ---- Backlight dim timer (checks every 10 s) ---------------------- */
+    lv_timer_create(dimmer_cb, 10000, NULL);
 
     ESP_LOGI(TAG, "UI initialized");
 }
@@ -419,7 +443,12 @@ void ui_update(const ha_data_t *d)
     int top = idx[0];
     lv_label_set_text(s_top_name, names[top]);
     if (d->circuit_power[top] >= 0) {
-        snprintf(buf, sizeof(buf), "%.0f W", d->circuit_power[top]);
+        if (d->total_power_w > 0) {
+            float pct = (d->circuit_power[top] / d->total_power_w) * 100.0f;
+            snprintf(buf, sizeof(buf), "%.0f W  %.0f%%", d->circuit_power[top], pct);
+        } else {
+            snprintf(buf, sizeof(buf), "%.0f W", d->circuit_power[top]);
+        }
         lv_label_set_text(s_top_val, buf);
         lv_bar_set_value(s_top_bar, 1000, LV_ANIM_OFF);   /* top = 100% */
     } else {
@@ -427,9 +456,9 @@ void ui_update(const ha_data_t *d)
         lv_bar_set_value(s_top_bar, 0, LV_ANIM_OFF);
     }
 
-    /* ---- Circuit rows ------------------------------------------------- */
+    /* ---- Circuit rows (skip idx[0] — already shown in top location) -- */
     for (int r = 0; r < CIR_ROWS; r++) {
-        int ci = idx[r];
+        int ci = idx[r + 1];
         lv_label_set_text(s_rows[r].name, names[ci]);
 
         float p = d->circuit_power[ci];
