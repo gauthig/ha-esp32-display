@@ -15,6 +15,8 @@ solar generation, and per-circuit power draw on a Waveshare 4.3" touchscreen.
 | Bottom | Top-5 circuits by current draw, with relative power bars |
 | Header | Clock (SNTP), connection status dot |
 
+![Display preview](docs/display-preview.svg)
+
 ## Quick start
 
 ```powershell

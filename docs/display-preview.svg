@@ -1,0 +1,101 @@
+<svg viewBox="0 0 800 480" width="800" height="480" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="480" fill="#0d1117"/>
+
+  <!-- ================================================================ -->
+  <!-- STATUS BAR (y: 0-40)                                             -->
+  <!-- ================================================================ -->
+  <text x="10" y="29" font-size="17" font-weight="bold" fill="#58a6ff">&#9889; ENERGY MONITOR</text>
+  <text x="776" y="27" font-size="13" fill="#7d8590" text-anchor="end">02:45 PM  Wed Aug 06</text>
+  <circle cx="788" cy="20" r="6" fill="#3fb950"/>
+
+  <!-- Separator -->
+  <rect x="0" y="41" width="800" height="1" fill="#30363d"/>
+
+  <!-- ================================================================ -->
+  <!-- CARD 1: TODAY  (x=6, y=48, w=258, h=168)                        -->
+  <!-- ================================================================ -->
+  <rect x="6" y="48" width="258" height="168" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="16" y="68" font-size="12" fill="#7d8590">TODAY</text>
+  <!-- Large grid kWh (48px, center offset -8 → center at y=124, baseline ~148) -->
+  <text x="135" y="148" font-size="46" font-weight="bold" fill="#e3a435" text-anchor="middle">27.4</text>
+  <text x="135" y="174" font-size="17" fill="#7d8590" text-anchor="middle">kWh</text>
+  <text x="135" y="207" font-size="12" fill="#7d8590" text-anchor="middle">grid | 8.5 kWh solar</text>
+
+  <!-- ================================================================ -->
+  <!-- CARD 2: GRID  (x=270, y=48, w=258, h=168)                       -->
+  <!-- ================================================================ -->
+  <rect x="270" y="48" width="258" height="168" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="280" y="68" font-size="12" fill="#7d8590">GRID</text>
+  <!-- Net grid watts (32px, center -12 → center at y=120, baseline ~148) -->
+  <text x="399" y="148" font-size="28" font-weight="bold" fill="#e3a435" text-anchor="middle">1.24 kW</text>
+  <!-- IMPORTING label (20px, bottom-mid -2 → ~205) -->
+  <text x="399" y="205" font-size="17" font-weight="bold" fill="#e3a435" text-anchor="middle">&#8595; IMPORTING</text>
+
+  <!-- ================================================================ -->
+  <!-- CARD 3: SOLAR  (x=534, y=48, w=258, h=168)                      -->
+  <!-- ================================================================ -->
+  <rect x="534" y="48" width="258" height="168" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="544" y="68" font-size="12" fill="#7d8590">&#8635;  SOLAR</text>
+  <!-- Solar watts (32px green) -->
+  <text x="663" y="148" font-size="28" font-weight="bold" fill="#3fb950" text-anchor="middle">2.15 kW</text>
+  <!-- kWh today sub -->
+  <text x="663" y="200" font-size="14" fill="#7d8590" text-anchor="middle">8.50 kWh today</text>
+
+  <!-- ================================================================ -->
+  <!-- TOP CONSUMER CARD  (x=6, y=222, w=788, h=108)                   -->
+  <!-- ================================================================ -->
+  <rect x="6" y="222" width="788" height="108" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="16" y="242" font-size="12" fill="#7d8590">TOP CONSUMER</text>
+  <!-- Name and wattage (24px, inner y=22 → abs baseline ~268) -->
+  <text x="16" y="268" font-size="22" font-weight="bold" fill="#e6edf3">Master BR</text>
+  <text x="784" y="268" font-size="22" font-weight="bold" fill="#e3a435" text-anchor="end">847 W</text>
+  <!-- Full-width amber bar (inner y=54 → abs y=286, h=20, w=768) -->
+  <rect x="16" y="285" width="768" height="20" rx="4" fill="#21262d"/>
+  <rect x="16" y="285" width="768" height="20" rx="4" fill="#e3a435"/>
+
+  <!-- ================================================================ -->
+  <!-- CIRCUIT LIST CARD  (x=6, y=336, w=788, h=138)                   -->
+  <!-- ROW_H=22, NAME_W=148, BAR_W=528, VAL_W=80, bar_x(inner)=154    -->
+  <!-- bar abs_x=170, val abs_x=704 (right-align at 784)               -->
+  <!-- ================================================================ -->
+  <rect x="6" y="336" width="788" height="138" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="16" y="354" font-size="12" fill="#7d8590">CIRCUITS</text>
+
+  <!-- Row 0: Master BR 100% (inner ry=22, abs name_y=383, bar_y=370) -->
+  <text x="16" y="382" font-size="14" fill="#e6edf3">Master BR</text>
+  <rect x="170" y="369" width="528" height="16" rx="3" fill="#21262d"/>
+  <rect x="170" y="369" width="528" height="16" rx="3" fill="#58a6ff"/>
+  <text x="784" y="382" font-size="14" fill="#7d8590" text-anchor="end">847 W</text>
+
+  <!-- Row 1: A/C 73% (inner ry=44, abs bar_y=392) -->
+  <text x="16" y="404" font-size="14" fill="#e6edf3">A/C</text>
+  <rect x="170" y="391" width="528" height="16" rx="3" fill="#21262d"/>
+  <rect x="170" y="391" width="385" height="16" rx="3" fill="#58a6ff"/>
+  <text x="784" y="404" font-size="14" fill="#7d8590" text-anchor="end">620 W</text>
+
+  <!-- Row 2: Pool 57% (inner ry=66, abs bar_y=413) -->
+  <text x="16" y="426" font-size="14" fill="#e6edf3">Pool</text>
+  <rect x="170" y="413" width="528" height="16" rx="3" fill="#21262d"/>
+  <rect x="170" y="413" width="301" height="16" rx="3" fill="#58a6ff"/>
+  <text x="784" y="426" font-size="14" fill="#7d8590" text-anchor="end">480 W</text>
+
+  <!-- Row 3: EV Charger 28% (inner ry=88, abs bar_y=435) -->
+  <text x="16" y="448" font-size="14" fill="#e6edf3">EV Charger</text>
+  <rect x="170" y="435" width="528" height="16" rx="3" fill="#21262d"/>
+  <rect x="170" y="435" width="148" height="16" rx="3" fill="#58a6ff"/>
+  <text x="784" y="448" font-size="14" fill="#7d8590" text-anchor="end">240 W</text>
+
+  <!-- Row 4: Upstairs BR 22% (inner ry=110, abs bar_y=457) -->
+  <text x="16" y="468" font-size="14" fill="#e6edf3">Upstairs BR</text>
+  <rect x="170" y="457" width="528" height="16" rx="3" fill="#21262d"/>
+  <rect x="170" y="457" width="116" height="16" rx="3" fill="#58a6ff"/>
+  <text x="784" y="468" font-size="14" fill="#7d8590" text-anchor="end">185 W</text>
+
+</svg>
