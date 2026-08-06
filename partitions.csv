@@ -1,0 +1,7 @@
+# ESP32-S3 16 MB flash — single-app layout
+# Binary is ~1.5 MB; factory = 2 MB gives ~500 KB headroom for font growth.
+# Name,   Type, SubType, Offset,  Size,     Flags
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x200000,
+spiffs,   data, spiffs,  ,        0xdf0000,
