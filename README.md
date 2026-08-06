@@ -1,4 +1,4 @@
-# HA Energy Display
+# HA ESP32 Display
 
 ESP32-S3 energy dashboard for Home Assistant. Shows live grid import/export,
 solar generation, and per-circuit power draw on a Waveshare 4.3" touchscreen.
@@ -69,7 +69,7 @@ python -m esptool --chip esp32s3 -p COM9 -b 460800 --before no_reset `
     write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m `
     0x0 build\bootloader\bootloader.bin `
     0x8000 build\partition_table\partition-table.bin `
-    0x10000 build\ha_energy_display.bin
+    0x10000 build\ha_esp32_display.bin
 ```
 
 Press **RESET** after flashing to boot normally.

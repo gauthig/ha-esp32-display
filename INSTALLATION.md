@@ -140,7 +140,7 @@ Press **RESET** on the board to see the full boot sequence. Exit with `Ctrl+]`.
 Expected boot log (first run):
 
 ```
-I app_init: Project name: ha_energy_display
+I app_init: Project name: ha_esp32_display
 I wifi: connected with ghome, ...
 I main: WiFi connected
 I main: SNTP started

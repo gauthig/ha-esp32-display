@@ -1,3 +1,3 @@
 cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(ha_energy_display)
+project(ha_esp32_display)
