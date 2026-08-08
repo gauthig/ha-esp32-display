@@ -72,8 +72,36 @@ at a time. See [README.md](README.md) and [INSTALLATION.md](INSTALLATION.md).
 
 ```
 devices/
-  main_house/          ← currently deployed (COM9, 192.168.1.54)
+  main_house/          ← Energy Monitor  (DEVICE_TYPE_ENERGY,       COM9, 192.168.1.54)
+  ham_controls/        ← Ham Controls    (DEVICE_TYPE_HAM_CONTROLS,  COM9, 192.168.1.54)
   NEW_DEVICE_TEMPLATE/ ← copy this to add a board
+```
+
+### Device types
+
+`device_config.h` sets `DEVICE_TYPE` to one of the constants in `device_types.h`:
+
+| Constant | UI | HA client |
+|----------|----|-----------|
+| `DEVICE_TYPE_ENERGY`       | Energy dashboard (`ui.c`)      | `ha_client.c` + `ha_history.c` |
+| `DEVICE_TYPE_HAM_CONTROLS` | Ham radio panel  (`ui_ham.c`)  | `ha_ham.c`                     |
+
+Switching devices changes which UI and data-fetcher compile in. Core code
+(WiFi, SNTP, board init) stays static.
+
+### Ham Controls device
+
+Three tap-to-toggle switch buttons + live power readings:
+
+| Button | Switch entity | Power sensor |
+|--------|--------------|--------------|
+| Radio PSU  | `switch.radio_power_supply` | `sensor.radio_power_supply_power` |
+| Shelly     | `switch.shelly1g4_a085e3c0f2c0` | — |
+| Palstar Amp | `switch.palstar_amp` | `sensor.palstar_amp` |
+
+Flash:
+```powershell
+.\tools\flash-device.ps1 -Device ham_controls -Port COM9
 ```
 
 ## Credentials (never commit)

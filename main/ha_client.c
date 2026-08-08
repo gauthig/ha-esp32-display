@@ -1,6 +1,7 @@
 /*
  * ha_client.c — polls Home Assistant /api/template for all energy data in one
  * HTTP request and parses the pipe-delimited result.
+ * Compiled only for DEVICE_TYPE_ENERGY builds.
  *
  * All sensor entity IDs and circuit definitions come from device_config.h,
  * which is selected per-device by tools/flash-device.ps1.
@@ -16,6 +17,8 @@
  */
 #include "ha_client.h"
 #include "ha_config.h"
+
+#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
 
 #include <string.h>
 #include <stdlib.h>
@@ -143,3 +146,5 @@ esp_err_t ha_client_fetch(ha_data_t *out)
              out->solar_power_w, out->solar_kwh_today);
     return ESP_OK;
 }
+
+#endif /* DEVICE_TYPE_ENERGY */

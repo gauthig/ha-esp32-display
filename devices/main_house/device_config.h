@@ -12,6 +12,7 @@
 #pragma once
 #include "secrets.h"   /* WIFI_SSID, WIFI_PASSWORD, HA_TOKEN */
 
+#define DEVICE_TYPE         DEVICE_TYPE_ENERGY
 #define DEVICE_NAME         "Main House"
 
 #define HA_HOST             "192.168.1.54"

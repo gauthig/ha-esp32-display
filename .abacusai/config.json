@@ -1,0 +1,9 @@
+{
+  "defaultPermissionMode": "yolo",
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "PowerShell(*)"
+    ]
+  }
+}
