@@ -52,16 +52,39 @@ static TaskHandle_t  s_poll_task;
 #if DEVICE_TYPE == DEVICE_TYPE_ENERGY
 
 /*
- * Chart request: set from LVGL task (event callback, under lvgl lock).
- * Read and cleared by ha_poll_task on core 0.
- * -1 = no request; 0 = HIST_GRID; 1 = HIST_SOLAR.
+ * Cached history updated by ha_hist_task every 10 minutes.
+ * Written under lvgl_port_lock; read by on_chart_requested which is already
+ * called under the LVGL lock from an event callback.
  */
-static volatile int s_chart_request = -1;
+static ha_history_t s_hist_cache;
 
-static void on_chart_requested(int type)
+/*
+ * Called from the LVGL event callback (already under lvgl_port_lock).
+ * Shows the cached chart instantly — no blocking fetch needed.
+ */
+static void on_chart_requested(void)
 {
-    s_chart_request = type;
-    xTaskNotifyGive(s_poll_task);
+    ui_show_chart(&s_hist_cache);
+}
+
+/*
+ * Background task: fetches combined 7-day history every 10 minutes.
+ * Runs on core 0 at lower priority than the poll task.
+ */
+static void ha_hist_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(8000));   /* let SNTP sync first */
+
+    while (true) {
+        ha_history_t tmp = {};
+        if (ha_history_fetch_combined(&tmp) == ESP_OK) {
+            if (lvgl_port_lock(500)) {
+                s_hist_cache = tmp;
+                lvgl_port_unlock();
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10UL * 60UL * 1000UL));
+    }
 }
 
 #endif /* DEVICE_TYPE_ENERGY */
@@ -169,19 +192,7 @@ static void ha_poll_task(void *arg)
     }
 
     while (true) {
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(HA_POLL_INTERVAL_MS));
-
-        int chart_req = s_chart_request;
-        if (chart_req >= 0) {
-            s_chart_request = -1;
-            ha_history_t hist = {};
-            ha_history_fetch((ha_history_type_t)chart_req, &hist);
-            if (lvgl_port_lock(500)) {
-                ui_show_chart((ha_history_type_t)chart_req, &hist);
-                lvgl_port_unlock();
-            }
-            continue;
-        }
+        vTaskDelay(pdMS_TO_TICKS(HA_POLL_INTERVAL_MS));
 
         if (ha_client_fetch(&data) == ESP_OK) {
             if (lvgl_port_lock(200)) {
@@ -273,6 +284,11 @@ void app_main(void)
     /* Poll task on core 0; save handle for wake-up notifications */
     xTaskCreatePinnedToCore(ha_poll_task, "ha_poll", 8192, NULL, 5,
                             &s_poll_task, 0);
+
+#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
+    /* History prefetch task — runs at lower priority, refreshes every 10 min */
+    xTaskCreatePinnedToCore(ha_hist_task, "ha_hist", 8192, NULL, 3, NULL, 0);
+#endif
 
     ESP_LOGI(TAG, "startup complete — device: %s", DEVICE_NAME);
 }

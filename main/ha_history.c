@@ -4,10 +4,15 @@
  * For each day we request a 15-minute window ending at 23:59:59 local time
  * (or "now" for the current day), then take the last state value in that
  * window.  This gives end-of-day accumulated kWh for past days and current
- * progress for today.  The statistics_during_period REST endpoint does not
- * exist in HA 2026.8+; the history/period endpoint is the correct approach.
+ * progress for today.
  *
- * Data volume per request: ~200–500 bytes (15 min × ~1 update/min × 30 B).
+ * ha_history_fetch_combined() fetches all three entities (grid import,
+ * grid export, solar) in a single pass and returns a combined ha_history_t
+ * with both grid[] and solar[] arrays populated.  It is called from the
+ * background ha_hist_task in main.c so the UI never waits for the 21 HTTP
+ * calls (~20 s) — the chart appears instantly from the cached result.
+ *
+ * Data volume per request: ~200-500 bytes (15 min x ~1 update/min x 30 B).
  * The same 8 KB buffer is reused across all requests.
  */
 #include "ha_history.h"
@@ -135,7 +140,12 @@ static esp_err_t fetch_entity_window_last(const char *entity_id,
 
 /* ---------------------------------------------------------------- API ----- */
 
-esp_err_t ha_history_fetch(ha_history_type_t type, ha_history_t *out)
+/*
+ * Fetch combined 7-day history: grid net kWh (import - export) and solar kWh.
+ * Makes 21 HTTP requests (3 entities x 7 day windows, ~20 s total).
+ * Intended to be called from ha_hist_task (background) in main.c.
+ */
+esp_err_t ha_history_fetch_combined(ha_history_t *out)
 {
     memset(out, 0, sizeof(*out));
 
@@ -145,7 +155,7 @@ esp_err_t ha_history_fetch(ha_history_type_t type, ha_history_t *out)
         return ESP_FAIL;
     }
 
-    /* Local midnight (HISTORY_DAYS-1) days ago — oldest day on the chart */
+    /* Local midnight (HISTORY_DAYS-1) days ago -- oldest day on the chart */
     struct tm tm_start;
     localtime_r(&now, &tm_start);
     tm_start.tm_mday -= (HISTORY_DAYS - 1);
@@ -154,7 +164,7 @@ esp_err_t ha_history_fetch(ha_history_type_t type, ha_history_t *out)
     tm_start.tm_sec   = 0;
     time_t start_midnight = mktime(&tm_start);
 
-    /* Day labels (Mon, Tue, …) for the x-axis */
+    /* Day labels (Mon, Tue, ...) for the x-axis */
     for (int i = 0; i < HISTORY_DAYS; i++) {
         time_t day_t = start_midnight + (time_t)i * 86400;
         struct tm tm_day;
@@ -171,33 +181,33 @@ esp_err_t ha_history_fetch(ha_history_type_t type, ha_history_t *out)
     for (int i = 0; i < HISTORY_DAYS; i++) {
         /*
          * End of day i:
-         *   past days → 23:59:59 local (1 s before next midnight)
-         *   today     → now
+         *   past days -> 23:59:59 local (1 s before next midnight)
+         *   today     -> now
          */
         time_t next_midnight = start_midnight + (time_t)(i + 1) * 86400;
         time_t win_end   = (i < HISTORY_DAYS - 1) ? (next_midnight - 1) : now;
         time_t win_start = win_end - 15 * 60;   /* 15-minute window */
 
-        if (type == HIST_GRID) {
-            float import_v = 0.0f, export_v = 0.0f;
-            esp_err_t r1 = fetch_entity_window_last(ENT_GRID_KWH,
-                                                     win_start, win_end,
-                                                     buf, &import_v);
-            fetch_entity_window_last(ENT_EXPORT_KWH,
-                                     win_start, win_end,
-                                     buf, &export_v);
-            if (r1 == ESP_OK) {
-                out->values[i] = import_v - export_v;
-                any_ok = true;
-            }
-        } else {
-            float solar_v = 0.0f;
-            if (fetch_entity_window_last(ENT_SOLAR_KWH,
-                                          win_start, win_end,
-                                          buf, &solar_v) == ESP_OK) {
-                out->values[i] = solar_v;
-                any_ok = true;
-            }
+        /* Grid: net kWh = import - export */
+        float import_v = 0.0f, export_v = 0.0f;
+        esp_err_t r_imp = fetch_entity_window_last(ENT_GRID_KWH,
+                                                    win_start, win_end,
+                                                    buf, &import_v);
+        fetch_entity_window_last(ENT_EXPORT_KWH,
+                                  win_start, win_end,
+                                  buf, &export_v);
+        if (r_imp == ESP_OK) {
+            out->grid[i] = import_v - export_v;
+            any_ok = true;
+        }
+
+        /* Solar kWh generated */
+        float solar_v = 0.0f;
+        if (fetch_entity_window_last(ENT_SOLAR_KWH,
+                                      win_start, win_end,
+                                      buf, &solar_v) == ESP_OK) {
+            out->solar[i] = solar_v;
+            any_ok = true;
         }
     }
 

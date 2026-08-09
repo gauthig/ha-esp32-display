@@ -128,10 +128,9 @@ esp_err_t ha_client_fetch(ha_data_t *out)
     s_resp[s_resp_len] = '\0';
     const char *p = s_resp;
 
-    out->grid_kwh_today  = next_token(&p);   /* [0] */
-    float _export_kwh    = next_token(&p);   /* [1] reserved */
-    (void)_export_kwh;
-    out->solar_power_w   = next_token(&p);   /* [2] */
+    out->grid_kwh_today   = next_token(&p);   /* [0] */
+    out->export_kwh_today = next_token(&p);   /* [1] */
+    out->solar_power_w    = next_token(&p);   /* [2] */
     out->total_power_w   = next_token(&p);   /* [3] */
     out->net_grid_w      = next_token(&p);   /* [4] */
     out->solar_kwh_today = next_token(&p);   /* [5] */

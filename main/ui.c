@@ -1,16 +1,19 @@
 /*
- * ui.c — Energy dashboard for 800x480, LVGL 9.
+ * ui.c -- Energy dashboard for 800x480, LVGL 9.
  *
  * Screens:
- *   SCREEN_MAIN  — status bar, three stat cards, top-consumer, circuit list.
- *   SCREEN_CHART — 7-day line chart (grid or solar); tap anywhere → main.
+ *   SCREEN_MAIN  -- status bar, three stat cards, top-consumer, circuit list.
+ *   SCREEN_CHART -- 7-day dual-series chart (grid amber + solar green); tap anywhere -> main.
  *
- * Dimmer: self-managed idle timer using lv_tick_get(), reset from LV_EVENT_PRESSED
- * on the root screen.  lv_display_get_inactive_time() is NOT used because GT911
- * phantom reads continuously reset it, preventing the 5-minute timeout from firing.
+ * TODAY card shows two values side-by-side:
+ *   NET   = energy imported from grid today (kWh)     [amber]
+ *   GROSS = total house consumption today (kWh)        [green]
+ *           = grid_imported + solar_generated - grid_exported
  *
- * Threading: all LVGL object calls happen under lvgl_port_lock, either in the
- * LVGL task (event callbacks) or in ha_poll_task holding the lock.
+ * Chart appears instantly because main.c pre-fetches history in ha_hist_task
+ * (background, every 10 min) and caches the result.  Tapping either the GRID
+ * or SOLAR card calls ui_set_chart_request_cb() with no type arg, and
+ * on_chart_requested() in main.c calls ui_show_chart(&s_hist_cache) directly.
  *
  * Compiled only for DEVICE_TYPE_ENERGY builds.
  */
@@ -58,6 +61,9 @@ static const char *TAG = "ui";
 #define CARD2_X  (CARD1_X + CARD_W + PAD)
 #define CARD3_X  (CARD2_X + CARD_W + PAD)
 
+/* Inner half-width of card 1 for the NET/GROSS columns */
+#define C1_HALF  ((CARD_W - 20) / 2)   /* content half-point (after pad_all=10) */
+
 /* Top-consumer card */
 #define TOP_Y    (CARD_Y + CARD_H + PAD)
 #define TOP_H    108
@@ -78,13 +84,12 @@ static const char *TAG = "ui";
 #define BAR_W    (CIR_W - 20 - NAME_W - VAL_W - PAD*2)
 
 /* Chart screen geometry */
-#define Y_AXIS_W      50          /* px left of chart reserved for y-axis labels */
+#define Y_AXIS_W      50
 #define CHART_X       (PAD + Y_AXIS_W)
-#define CHART_Y       48          /* below title */
+#define CHART_Y       48
 #define CHART_W       (SCR_W - PAD*2 - Y_AXIS_W)
-#define CHART_H       370         /* leaves room for day labels + hint */
-#define CHART_PAD     10          /* lv_obj pad_all on the chart widget */
-/* x position of chart point i (in screen coords) */
+#define CHART_H       360
+#define CHART_PAD     10
 #define CHART_PT_X(i) (CHART_X + CHART_PAD + \
                        (i) * (CHART_W - CHART_PAD*2) / (HISTORY_DAYS - 1))
 
@@ -93,7 +98,7 @@ static const char *TAG = "ui";
 #define DIM_PERCENT     10
 
 static bool     s_dimmed;
-static uint32_t s_last_activity_tick;   /* lv_tick_get() of last confirmed press */
+static uint32_t s_last_activity_tick;
 
 /* -------------------------------------------------------- Screen state -- */
 typedef enum { SCREEN_MAIN, SCREEN_CHART } screen_t;
@@ -107,12 +112,16 @@ static bool      s_connected;
 /* ----------------------------------------------------- Main-screen widgets */
 static lv_obj_t *s_time_label;
 static lv_obj_t *s_status_dot;
-static lv_obj_t *s_kwh_val;
-static lv_obj_t *s_kwh_sub;
+/* Card 1: TODAY - NET / GROSS */
+static lv_obj_t *s_net_val;
+static lv_obj_t *s_gross_val;
+/* Card 2: GRID */
 static lv_obj_t *s_grid_val;
 static lv_obj_t *s_grid_lbl;
+/* Card 3: SOLAR */
 static lv_obj_t *s_solar_val;
 static lv_obj_t *s_solar_sub;
+/* Top consumer */
 static lv_obj_t *s_top_name;
 static lv_obj_t *s_top_val;
 static lv_obj_t *s_top_bar;
@@ -123,9 +132,9 @@ static struct {
 } s_rows[CIR_ROWS];
 
 /* -------------------------------------------------- Chart request callback */
-static void (*s_chart_request_cb)(int type);
+static void (*s_chart_request_cb)(void);
 
-void ui_set_chart_request_cb(void (*cb)(int type))
+void ui_set_chart_request_cb(void (*cb)(void))
 {
     s_chart_request_cb = cb;
 }
@@ -184,7 +193,6 @@ static void dimmer_cb(lv_timer_t *t)
 {
     (void)t;
     uint32_t elapsed = lv_tick_get() - s_last_activity_tick;
-    ESP_LOGD(TAG, "idle: elapsed=%lu ms dimmed=%d", (unsigned long)elapsed, s_dimmed);
     if (!s_dimmed && elapsed >= DIM_TIMEOUT_MS) {
         board_backlight_set_percent(DIM_PERCENT);
         s_dimmed = true;
@@ -223,22 +231,13 @@ static void screen_press_cb(lv_event_t *e)
     }
 }
 
-static void grid_card_clicked_cb(lv_event_t *e)
+static void chart_card_clicked_cb(lv_event_t *e)
 {
     (void)e;
-    if (s_chart_request_cb) s_chart_request_cb((int)HIST_GRID);
+    /* Both GRID and SOLAR cards call the same combined chart callback */
+    if (s_chart_request_cb) s_chart_request_cb();
 }
 
-static void solar_card_clicked_cb(lv_event_t *e)
-{
-    (void)e;
-    if (s_chart_request_cb) s_chart_request_cb((int)HIST_SOLAR);
-}
-
-/*
- * Build all main-screen widgets on `scr`, refresh all s_* pointers.
- * Does NOT create LVGL timers (those live for the session).
- */
 static void build_main_on(lv_obj_t *scr)
 {
     lv_obj_set_style_bg_color(scr, C_BG, 0);
@@ -271,27 +270,54 @@ static void build_main_on(lv_obj_t *scr)
     lv_obj_set_style_border_width(sep, 0, 0);
     lv_obj_set_style_radius(sep, 0, 0);
 
-    /* ---- Card 1: TODAY kWh ------------------------------------ */
+    /* ---- Card 1: TODAY  (NET | GROSS two-column layout) -------- */
     lv_obj_t *c1 = make_card(scr, CARD1_X, CARD_Y, CARD_W, CARD_H);
+
     make_label(c1, "TODAY", &lv_font_montserrat_14, C_TXT2,
                LV_ALIGN_TOP_LEFT, 0, 0);
 
-    s_kwh_val = lv_label_create(c1);
-    lv_label_set_text(s_kwh_val, "---");
-    lv_obj_set_style_text_font(s_kwh_val, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(s_kwh_val, C_AMBER, 0);
-    lv_obj_align(s_kwh_val, LV_ALIGN_CENTER, 0, -8);
+    /* Vertical divider between the two columns */
+    lv_obj_t *divider = lv_obj_create(c1);
+    lv_obj_set_pos(divider, C1_HALF, 16);
+    lv_obj_set_size(divider, 1, CARD_H - 34);
+    lv_obj_set_style_bg_color(divider, C_BORDER, 0);
+    lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(divider, 0, 0);
+    lv_obj_set_style_radius(divider, 0, 0);
 
-    make_label(c1, "kWh", &lv_font_montserrat_20, C_TXT2,
-               LV_ALIGN_CENTER, 0, 32);
+    /* --- Left column: NET (grid import kWh) --- */
+    make_label(c1, "NET", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, 2, 20);
 
-    s_kwh_sub = lv_label_create(c1);
-    lv_label_set_text(s_kwh_sub, "from grid today");
-    lv_obj_set_style_text_font(s_kwh_sub, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_kwh_sub, C_TXT2, 0);
-    lv_obj_align(s_kwh_sub, LV_ALIGN_BOTTOM_MID, 0, -2);
+    s_net_val = lv_label_create(c1);
+    lv_label_set_text(s_net_val, "---");
+    lv_obj_set_style_text_font(s_net_val, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(s_net_val, C_AMBER, 0);
+    lv_obj_align(s_net_val, LV_ALIGN_TOP_LEFT, 2, 38);
 
-    /* ---- Card 2: GRID — tappable → 7-day grid chart ---------- */
+    make_label(c1, "kWh", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, 2, 78);
+    make_label(c1, "from grid", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, 2, 96);
+
+    /* --- Right column: GROSS (total consumption kWh) --- */
+    int rx = C1_HALF + 6;   /* right column x offset in content coords */
+
+    make_label(c1, "GROSS", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, rx, 20);
+
+    s_gross_val = lv_label_create(c1);
+    lv_label_set_text(s_gross_val, "---");
+    lv_obj_set_style_text_font(s_gross_val, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(s_gross_val, C_GREEN, 0);
+    lv_obj_align(s_gross_val, LV_ALIGN_TOP_LEFT, rx, 38);
+
+    make_label(c1, "kWh", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, rx, 78);
+    make_label(c1, "total used", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, rx, 96);
+
+    /* ---- Card 2: GRID -- tappable, shows combined chart -------- */
     lv_obj_t *c2 = make_card(scr, CARD2_X, CARD_Y, CARD_W, CARD_H);
     make_label(c2, "GRID  " LV_SYMBOL_RIGHT, &lv_font_montserrat_14, C_TXT2,
                LV_ALIGN_TOP_LEFT, 0, 0);
@@ -308,9 +334,10 @@ static void build_main_on(lv_obj_t *scr)
     lv_obj_set_style_text_color(s_grid_lbl, C_AMBER, 0);
     lv_obj_align(s_grid_lbl, LV_ALIGN_BOTTOM_MID, 0, -2);
 
-    lv_obj_add_event_cb(c2, grid_card_clicked_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(c2, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(c2, chart_card_clicked_cb, LV_EVENT_CLICKED, NULL);
 
-    /* ---- Card 3: SOLAR — tappable → 7-day solar chart -------- */
+    /* ---- Card 3: SOLAR -- tappable, shows combined chart ------- */
     lv_obj_t *c3 = make_card(scr, CARD3_X, CARD_Y, CARD_W, CARD_H);
     make_label(c3, LV_SYMBOL_LOOP "  SOLAR  " LV_SYMBOL_RIGHT,
                &lv_font_montserrat_14, C_TXT2,
@@ -328,26 +355,28 @@ static void build_main_on(lv_obj_t *scr)
     lv_obj_set_style_text_color(s_solar_sub, C_TXT2, 0);
     lv_obj_align(s_solar_sub, LV_ALIGN_BOTTOM_MID, 0, -2);
 
-    lv_obj_add_event_cb(c3, solar_card_clicked_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(c3, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(c3, chart_card_clicked_cb, LV_EVENT_CLICKED, NULL);
 
     /* ---- Top consumer card ------------------------------------ */
     lv_obj_t *top_card = make_card(scr, TOP_X, TOP_Y, TOP_W, TOP_H);
-    make_label(top_card, "TOP LOCATION", &lv_font_montserrat_14, C_TXT2,
+    make_label(top_card, LV_SYMBOL_WARNING "  TOP CONSUMER",
+               &lv_font_montserrat_14, C_TXT2,
                LV_ALIGN_TOP_LEFT, 0, 0);
 
     s_top_name = lv_label_create(top_card);
     lv_label_set_text(s_top_name, "---");
-    lv_obj_set_style_text_font(s_top_name, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(s_top_name, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(s_top_name, C_TXT, 0);
-    lv_obj_set_pos(s_top_name, 0, 22);
+    lv_obj_align(s_top_name, LV_ALIGN_TOP_LEFT, 0, 22);
 
     s_top_val = lv_label_create(top_card);
-    lv_label_set_text(s_top_val, "--- W");
-    lv_obj_set_style_text_font(s_top_val, &lv_font_montserrat_24, 0);
+    lv_label_set_text(s_top_val, "---");
+    lv_obj_set_style_text_font(s_top_val, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(s_top_val, C_AMBER, 0);
     lv_obj_align(s_top_val, LV_ALIGN_TOP_RIGHT, 0, 22);
 
-    s_top_bar = make_bar(top_card, 0, 54, TOP_W - 20, 20, C_AMBER);
+    s_top_bar = make_bar(top_card, 0, 54, TOP_W - 20, 14, C_AMBER);
 
     /* ---- Circuit list ---------------------------------------- */
     lv_obj_t *cir_card = make_card(scr, CIR_X, CIR_Y, CIR_W, CIR_H);
@@ -356,22 +385,20 @@ static void build_main_on(lv_obj_t *scr)
 
     for (int i = 0; i < CIR_ROWS; i++) {
         int ry = 22 + i * ROW_H;
+        int bar_x = NAME_W + PAD;
 
         s_rows[i].name = lv_label_create(cir_card);
         lv_label_set_text(s_rows[i].name, "---");
-        lv_obj_set_style_text_font(s_rows[i].name, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(s_rows[i].name, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(s_rows[i].name, C_TXT, 0);
         lv_obj_set_pos(s_rows[i].name, 0, ry + 1);
-        lv_obj_set_width(s_rows[i].name, NAME_W);
-        lv_label_set_long_mode(s_rows[i].name, LV_LABEL_LONG_CLIP);
+        lv_obj_set_size(s_rows[i].name, NAME_W, LV_SIZE_CONTENT);
 
-        int bar_x = NAME_W + PAD;
-        s_rows[i].bar = make_bar(cir_card, bar_x, ry + 2,
-                                 BAR_W, ROW_H - 6, C_BLUE);
+        s_rows[i].bar = make_bar(cir_card, bar_x, ry + 3, BAR_W, 10, C_BLUE);
 
         s_rows[i].val = lv_label_create(cir_card);
-        lv_label_set_text(s_rows[i].val, "--- W");
-        lv_obj_set_style_text_font(s_rows[i].val, &lv_font_montserrat_16, 0);
+        lv_label_set_text(s_rows[i].val, "---");
+        lv_obj_set_style_text_font(s_rows[i].val, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(s_rows[i].val, C_TXT2, 0);
         lv_obj_set_pos(s_rows[i].val, bar_x + BAR_W + PAD, ry + 1);
         lv_obj_set_size(s_rows[i].val, VAL_W, LV_SIZE_CONTENT);
@@ -384,18 +411,13 @@ static void build_main_on(lv_obj_t *scr)
 static void chart_back_cb(lv_event_t *e)
 {
     (void)e;
-    /* Save pointer to chart screen BEFORE we load the new main screen. */
     lv_obj_t *chart_scr = lv_screen_active();
 
-    /* Build main screen on a fresh screen object */
     lv_obj_t *new_scr = lv_obj_create(NULL);
     build_main_on(new_scr);
     lv_screen_load(new_scr);
-
-    /* Safe async delete: we're still inside the event handler on chart_scr */
     lv_obj_delete_async(chart_scr);
 
-    /* Clear and re-apply all s_* pointers are now on new_scr */
     s_screen = SCREEN_MAIN;
     s_last_activity_tick = lv_tick_get();
     s_dimmed = false;
@@ -404,51 +426,59 @@ static void chart_back_cb(lv_event_t *e)
     if (s_has_last_data) ui_update(&s_last_data);
 }
 
-void ui_show_chart(ha_history_type_t type, const ha_history_t *hist)
+/*
+ * Show the combined 7-day chart (grid amber + solar green).
+ * Called directly from on_chart_requested() in main.c under lvgl lock --
+ * no waiting, instant display from cached data.
+ */
+void ui_show_chart(const ha_history_t *hist)
 {
-    const char *title   = (type == HIST_GRID) ? LV_SYMBOL_SHUFFLE "  GRID — 7 Day History  (kWh)"
-                                               : LV_SYMBOL_LOOP    "  SOLAR — 7 Day History  (kWh)";
-    lv_color_t line_col = (type == HIST_GRID) ? C_AMBER : C_GREEN;
-
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, C_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, chart_back_cb, LV_EVENT_CLICKED, NULL);
-    /* Track activity so dim timer resets while on chart screen */
     lv_obj_add_event_cb(scr, screen_press_cb, LV_EVENT_PRESSED, NULL);
 
     /* Title */
-    make_label(scr, title, &lv_font_montserrat_20, line_col,
+    make_label(scr, LV_SYMBOL_CHARGE "  7 Day Energy History",
+               &lv_font_montserrat_20, C_BLUE,
                LV_ALIGN_TOP_LEFT, PAD + 2, 10);
 
-    /* "Tap to return" hint */
+    /* Legend */
+    make_label(scr, "-- Grid",  &lv_font_montserrat_14, C_AMBER,
+               LV_ALIGN_TOP_RIGHT, -(PAD + 74), 13);
+    make_label(scr, "-- Solar", &lv_font_montserrat_14, C_GREEN,
+               LV_ALIGN_TOP_RIGHT, -PAD, 13);
+
+    /* Return hint */
     make_label(scr, LV_SYMBOL_LEFT "  Tap anywhere to return",
                &lv_font_montserrat_14, C_TXT2,
                LV_ALIGN_BOTTOM_MID, 0, -6);
 
-    if (!hist->valid) {
-        make_label(scr, "No history data available.\n"
-                        "Check that HA long-term statistics are enabled\n"
-                        "for the energy entities.",
+    if (!hist || !hist->valid) {
+        make_label(scr,
+                   "History loading...\n"
+                   "Chart will be available ~20 s after boot.\n"
+                   "Tap to dismiss and try again shortly.",
                    &lv_font_montserrat_16, C_TXT2,
                    LV_ALIGN_CENTER, 0, 0);
         goto load;
     }
 
-    /* ---- Find y-axis range ------------------------------------ */
-    float y_min = 0.0f, y_max = 0.0f;
+    /* ---- Y-axis range: cover both series ---------------------- */
+    float y_min = 0.0f, y_max = 1.0f;
     for (int i = 0; i < HISTORY_DAYS; i++) {
-        if (hist->values[i] < y_min) y_min = hist->values[i];
-        if (hist->values[i] > y_max) y_max = hist->values[i];
+        if (hist->grid[i]  < y_min) y_min = hist->grid[i];
+        if (hist->grid[i]  > y_max) y_max = hist->grid[i];
+        if (hist->solar[i] > y_max) y_max = hist->solar[i];
     }
-    /* Pad 15 % above; allow zero-line visible when values go negative */
-    if (y_max < 1.0f) y_max = 1.0f;
     float y_range_lo = (y_min < 0) ? y_min * 1.15f : 0.0f;
     float y_range_hi = y_max * 1.15f;
+    if (y_range_hi < 1.0f) y_range_hi = 1.0f;
 
-    /* Scale: store values ×10 so one decimal kWh resolution fits in int32_t */
+    /* Store values *10 for one decimal kWh resolution */
     int32_t range_lo = (int32_t)(y_range_lo * 10.0f);
     int32_t range_hi = (int32_t)(y_range_hi * 10.0f);
     if (range_hi <= range_lo) range_hi = range_lo + 10;
@@ -464,49 +494,49 @@ void ui_show_chart(ha_history_type_t type, const ha_history_t *hist)
     lv_obj_set_style_radius(chart, RADIUS, 0);
     lv_obj_set_style_pad_all(chart, CHART_PAD, 0);
     lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);  /* let clicks bubble to scr */
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);
 
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, HISTORY_DAYS);
-    lv_chart_set_div_line_count(chart, 4, 0);   /* 4 horizontal grid lines */
+    lv_chart_set_div_line_count(chart, 4, 0);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, range_lo, range_hi);
 
-    /* Grid line color */
     lv_obj_set_style_line_color(chart, C_BORDER, LV_PART_MAIN);
     lv_obj_set_style_line_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
 
-    lv_chart_series_t *ser = lv_chart_add_series(chart, line_col,
-                                                  LV_CHART_AXIS_PRIMARY_Y);
-    /* Line width */
+    /* Hide data point dots for clean lines */
+    lv_obj_set_style_size(chart, 0, 0, LV_PART_INDICATOR);
+
+    /* Line width applies to all series */
     lv_obj_set_style_line_width(chart, 3, LV_PART_ITEMS);
-    lv_obj_set_style_line_color(chart, line_col, LV_PART_ITEMS);
 
-    for (int i = 0; i < HISTORY_DAYS; i++) {
-        lv_chart_set_next_value(chart, ser,
-                                (lv_value_precise_t)(hist->values[i] * 10.0f));
-    }
+    /* Grid series (amber) */
+    lv_chart_series_t *ser_grid = lv_chart_add_series(chart, C_AMBER,
+                                                       LV_CHART_AXIS_PRIMARY_Y);
+    for (int i = 0; i < HISTORY_DAYS; i++)
+        lv_chart_set_next_value(chart, ser_grid,
+                                (lv_value_precise_t)(hist->grid[i] * 10.0f));
 
-    /* ---- Y-axis labels (left of chart, one per div line + top/bottom) ---- */
-    /* lv_chart_set_div_line_count(chart, 4, 0) places 4 horizontal lines at
-     * 1/5, 2/5, 3/5, 4/5 of the inner height from the top.  We draw 6 labels
-     * (k=0..5) at the same fractional positions: top, four div lines, bottom. */
+    /* Solar series (green) */
+    lv_chart_series_t *ser_solar = lv_chart_add_series(chart, C_GREEN,
+                                                        LV_CHART_AXIS_PRIMARY_Y);
+    for (int i = 0; i < HISTORY_DAYS; i++)
+        lv_chart_set_next_value(chart, ser_solar,
+                                (lv_value_precise_t)(hist->solar[i] * 10.0f));
+
+    /* ---- Y-axis labels ---------------------------------------- */
     {
-        int n_ticks  = 6;
-        int inner_h  = CHART_H - 2 * CHART_PAD;
-        int lbl_w    = Y_AXIS_W - PAD - 4;   /* right-aligned within left margin */
-
+        int n_ticks = 6;
+        int inner_h = CHART_H - 2 * CHART_PAD;
+        int lbl_w   = Y_AXIS_W - PAD - 4;
         for (int k = 0; k < n_ticks; k++) {
             float val_s10 = (float)range_hi
                           - (float)k * (float)(range_hi - range_lo) / (float)(n_ticks - 1);
             float val_kwh = val_s10 / 10.0f;
-
-            /* Pixel position: matches div-line and chart-top/bottom positions */
             int y_in = CHART_PAD + inner_h * k / (n_ticks - 1);
-            int y_sc = CHART_Y + y_in - 7;   /* -7 vertically centres 14 px text */
-
+            int y_sc = CHART_Y + y_in - 7;
             char tbuf[10];
             snprintf(tbuf, sizeof(tbuf), "%.1f", val_kwh);
-
             lv_obj_t *y_lbl = lv_label_create(scr);
             lv_label_set_text(y_lbl, tbuf);
             lv_obj_set_style_text_font(y_lbl, &lv_font_montserrat_14, 0);
@@ -518,18 +548,19 @@ void ui_show_chart(ha_history_type_t type, const ha_history_t *hist)
     }
 
     /* ---- Day labels below chart ------------------------------- */
-    int day_label_y = CHART_Y + CHART_H + 4;
-    for (int i = 0; i < HISTORY_DAYS; i++) {
-        int cx = CHART_PT_X(i);
-        lv_obj_t *lbl = lv_label_create(scr);
-        lv_label_set_text(lbl, hist->day_labels[i]);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, C_TXT2, 0);
-        lv_obj_set_pos(lbl, cx - 14, day_label_y);
+    {
+        int day_y = CHART_Y + CHART_H + 4;
+        for (int i = 0; i < HISTORY_DAYS; i++) {
+            int cx = CHART_PT_X(i);
+            lv_obj_t *lbl = lv_label_create(scr);
+            lv_label_set_text(lbl, hist->day_labels[i]);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(lbl, C_TXT2, 0);
+            lv_obj_set_pos(lbl, cx - 14, day_y);
+        }
     }
 
 load:
-    /* Load chart screen, schedule deletion of whichever screen was active */
     {
         lv_obj_t *old = lv_screen_active();
         lv_screen_load(scr);
@@ -562,7 +593,6 @@ void ui_update(const ha_data_t *d)
 {
     if (!d->valid) return;
 
-    /* Cache regardless of screen state */
     s_last_data     = *d;
     s_has_last_data = true;
 
@@ -570,18 +600,24 @@ void ui_update(const ha_data_t *d)
 
     char buf[48];
 
-    /* Card 1: TODAY kWh */
+    /* Card 1: TODAY - NET (grid import) and GROSS (total consumption) */
     if (d->grid_kwh_today >= 0)
         snprintf(buf, sizeof(buf), "%.1f", d->grid_kwh_today);
     else
         snprintf(buf, sizeof(buf), "---");
-    lv_label_set_text(s_kwh_val, buf);
+    lv_label_set_text(s_net_val, buf);
 
-    if (d->solar_kwh_today >= 0)
-        snprintf(buf, sizeof(buf), "grid | %.1f kWh solar", d->solar_kwh_today);
+    /* GROSS = grid_import + solar_generated - grid_export */
+    float gross = -1.0f;
+    if (d->grid_kwh_today >= 0 && d->solar_kwh_today >= 0) {
+        float exp_kwh = (d->export_kwh_today >= 0) ? d->export_kwh_today : 0.0f;
+        gross = d->grid_kwh_today + d->solar_kwh_today - exp_kwh;
+    }
+    if (gross >= 0)
+        snprintf(buf, sizeof(buf), "%.1f", gross);
     else
-        snprintf(buf, sizeof(buf), "from grid today");
-    lv_label_set_text(s_kwh_sub, buf);
+        snprintf(buf, sizeof(buf), "---");
+    lv_label_set_text(s_gross_val, buf);
 
     /* Card 2: GRID */
     if (d->net_grid_w >= 0) {
@@ -618,7 +654,7 @@ void ui_update(const ha_data_t *d)
         snprintf(buf, sizeof(buf), "-- kWh today");
     lv_label_set_text(s_solar_sub, buf);
 
-    /* Sort circuits by power descending (insertion sort, 13 items) */
+    /* Sort circuits by power descending */
     const char **names = ha_circuit_names();
     int idx[HA_NUM_CIRCUITS];
     for (int i = 0; i < HA_NUM_CIRCUITS; i++) idx[i] = i;
@@ -628,7 +664,7 @@ void ui_update(const ha_data_t *d)
         int   j   = i - 1;
         while (j >= 0) {
             float a = (d->circuit_power[idx[j]] < 0) ? 0 : d->circuit_power[idx[j]];
-            float b = (kp                         < 0) ? 0 : kp;
+            float b = (kp < 0) ? 0 : kp;
             if (a <= b) { idx[j+1] = idx[j]; j--; } else break;
         }
         idx[j+1] = key;
@@ -637,7 +673,6 @@ void ui_update(const ha_data_t *d)
     float max_p = 1.0f;
     if (d->circuit_power[idx[0]] > max_p) max_p = d->circuit_power[idx[0]];
 
-    /* Top consumer */
     int top = idx[0];
     lv_label_set_text(s_top_name, names[top]);
     if (d->circuit_power[top] >= 0) {
@@ -654,7 +689,6 @@ void ui_update(const ha_data_t *d)
         lv_bar_set_value(s_top_bar, 0, LV_ANIM_OFF);
     }
 
-    /* Circuit rows */
     for (int r = 0; r < CIR_ROWS; r++) {
         int   ci = idx[r + 1];
         float p  = d->circuit_power[ci];
@@ -669,7 +703,6 @@ void ui_update(const ha_data_t *d)
         }
     }
 
-    /* Status dot */
     lv_obj_set_style_bg_color(s_status_dot,
                               s_connected ? C_DOT_OK : C_DOT_ERR, 0);
 }

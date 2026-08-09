@@ -7,6 +7,7 @@
 
 typedef struct {
     float grid_kwh_today;      /* energy imported from grid today (kWh) */
+    float export_kwh_today;    /* energy exported to grid today (kWh) */
     float solar_kwh_today;     /* solar energy generated today (kWh) */
     float solar_power_w;       /* current solar generation (W) */
     float total_power_w;       /* total home consumption (W) */

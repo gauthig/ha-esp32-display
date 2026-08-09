@@ -16,16 +16,18 @@ void ui_update(const ha_data_t *data);
 void ui_set_connected(bool connected);
 
 /*
- * Register callback invoked (under LVGL lock) when the user taps a stat card.
- * The callback should trigger a history fetch and then call ui_show_chart().
- * type: 0 = HIST_GRID, 1 = HIST_SOLAR.
+ * Register callback invoked (under LVGL lock) when the user taps a chart card.
+ * The callback should call ui_show_chart() with cached history data immediately.
+ * No type arg — both grid and solar cards now show the same combined chart.
  */
-void ui_set_chart_request_cb(void (*cb)(int type));
+void ui_set_chart_request_cb(void (*cb)(void));
 
 /*
- * Replace the current screen with a 7-day line chart.
+ * Replace the current screen with the combined 7-day line chart.
+ * Shows both grid (amber) and solar (green) series on a shared axis.
  * Must be called under the LVGL port lock.
+ * If hist->valid is false, shows a "loading" message instead.
  */
-void ui_show_chart(ha_history_type_t type, const ha_history_t *hist);
+void ui_show_chart(const ha_history_t *hist);
 
 #endif /* DEVICE_TYPE_ENERGY */

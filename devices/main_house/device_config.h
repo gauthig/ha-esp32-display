@@ -3,11 +3,11 @@
  *
  * Location : Main electrical panel / living room
  * Board    : Waveshare ESP32-S3-Touch-LCD-4.3 (non-B)
- * COM port : COM9
+ * COM port : COM8
  * HA host  : 192.168.1.54:8123
  *
  * Flash command:
- *   .\tools\flash-device.ps1 -Device main_house -Port COM9
+ *   .\tools\flash-device.ps1 -Device main_house -Port COM8
  */
 #pragma once
 #include "secrets.h"   /* WIFI_SSID, WIFI_PASSWORD, HA_TOKEN */
