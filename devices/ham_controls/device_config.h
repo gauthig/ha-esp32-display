@@ -35,4 +35,4 @@
 /* ── Power sensor entities ──────────────────────────────────────────────── */
 /* power[0] → shown on Radio PSU button;  power[1] → shown on Palstar Amp button */
 #define HAM_POWER_ENT_0   "sensor.radio_power_supply_power"
-#define HAM_POWER_ENT_1   "sensor.palstar_amp"
+#define HAM_POWER_ENT_1   "sensor.palstar_amp_power"
