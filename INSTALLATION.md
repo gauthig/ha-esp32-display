@@ -15,7 +15,7 @@
 
 | Device | Board | Notes |
 |--------|-------|-------|
-| `energy_4v3_lcd`, `ham_controls` | Waveshare ESP32-S3-Touch-LCD-4.3 **non-B** | `board.c` |
+| `energy_4v3_lcd` | Waveshare ESP32-S3-Touch-LCD-4.3 **non-B** | `board.c` |
 | `office_panel_7` | Waveshare ESP32-S3-Touch-LCD-7B | `board_7b.c` + `ws_io_expander.c`, portrait |
 
 ### 4.3" non-B vs B
@@ -59,12 +59,11 @@ want to reflash it (new firmware, changed entities, etc.).
 
 ### Step 1 — Edit config if needed
 
-Device configs live in `devices/<name>/device_config.h`. For the two current panels:
+Device configs live in `devices/<name>/device_config.h`:
 
 | Panel | Config file |
 |-------|------------|
 | Energy Monitor | `devices\energy_4v3_lcd\device_config.h` |
-| Ham Controls | `devices\ham_controls\device_config.h` |
 | Office Panel 7 | `devices\office_panel_7\device_config.h` |
 
 ### Step 2 — Put device in boot mode
@@ -80,9 +79,6 @@ The device is now waiting for the flash tool.
 ```powershell
 # Energy Monitor
 .\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
-
-# Ham Controls
-.\tools\flash-device.ps1 -Device ham_controls -Port COM10
 
 # Office Panel 7
 .\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
@@ -127,14 +123,6 @@ I wifi: connected with ghome, ...
 I ha_client: grid 27.4 kWh | net 434 W | solar 215 W
 ```
 
-Expected boot log — Ham Controls:
-
-```
-I main: startup complete — device: Ham Controls
-I wifi: connected with ghome, ...
-I ha_ham: sw=[1,0,1] pwr=[145.0,320.0]
-```
-
 Expected boot log — Office Panel 7:
 
 ```
@@ -163,11 +151,8 @@ cd ha-esp32-display
 **It is gitignored — never commit it.**
 
 ```powershell
-# For Energy Monitor
+# e.g. for the Energy Monitor (repeat per device dir you build)
 copy devices\energy_4v3_lcd\secrets.h.example devices\energy_4v3_lcd\secrets.h
-
-# For Ham Controls
-copy devices\ham_controls\secrets.h.example devices\ham_controls\secrets.h
 ```
 
 Edit each `secrets.h`:
@@ -188,8 +173,8 @@ Edit each `secrets.h`:
 # Energy Monitor
 .\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
 
-# Ham Controls
-.\tools\flash-device.ps1 -Device ham_controls -Port COM10
+# Office Panel 7
+.\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
 ```
 
 The script:
@@ -240,37 +225,6 @@ Set these to point at your total consumption sensor:
 
 ---
 
-## Configuring the Ham Controls panel
-
-Settings live in `devices/ham_controls/device_config.h`.
-
-```c
-#define DEVICE_TYPE  DEVICE_TYPE_HAM_CONTROLS   // selects ham UI and HA client
-#define DEVICE_NAME  "Ham Controls"
-
-#define HA_HOST      "192.168.1.54"
-#define HA_PORT      8123
-#define HA_POLL_INTERVAL_MS  15000
-#define LOCAL_TZ     "PST8PDT,M3.2.0,M11.1.0"
-
-/* Switch entities — tap a card to toggle */
-#define HAM_SW_ENT_0   "switch.radio_power_supply"
-#define HAM_SW_ENT_1   "switch.shelly1g4_a085e3c0f2c0"
-#define HAM_SW_ENT_2   "switch.palstar_amp"
-
-/* Short labels shown on each card (must be 3 entries) */
-#define HAM_SW_NAMES_INIT  "Radio PSU", "Shelly", "Palstar Amp"
-
-/* Power sensor entities (shown on the card when available) */
-#define HAM_POWER_ENT_0   "sensor.radio_power_supply_power"   /* → Radio PSU card */
-#define HAM_POWER_ENT_1   "sensor.palstar_amp"                /* → Palstar Amp card */
-```
-
-To change which switch or sensor a button controls, update the `HAM_SW_ENT_*`
-and `HAM_POWER_ENT_*` macros and reflash.
-
----
-
 ## Configuring the Office Panel 7
 
 Settings live in `devices/office_panel_7/device_config.h`. This device is a
@@ -291,7 +245,7 @@ modules — so its config carries all three sets of macros.
 #define LIGHT_ENT_0  "light.office_fan_light_1"
 #define LIGHT_ENT_1  "light.office_fan_light_2"
 
-/* HAM switches — same three as ham_controls */
+/* HAM switches — the ham radio station switches (tap a card to toggle) */
 #define HAM_SW_ENT_0 "switch.radio_power_supply"
 #define HAM_SW_ENT_1 "switch.shelly1g4_a085e3c0f2c0"
 #define HAM_SW_ENT_2 "switch.palstar_amp"
@@ -312,13 +266,11 @@ calls `light.toggle` on both; the long-press popup calls `light.turn_on` with
 
 ### Using an existing panel type
 
-If the new device is another Energy Monitor or Ham Controls panel:
+If the new device reuses an existing panel type (e.g. another Energy Monitor):
 
 1. Copy the matching template:
    ```powershell
    Copy-Item -Recurse devices\energy_4v3_lcd devices\garage
-   # or
-   Copy-Item -Recurse devices\ham_controls devices\workshop_ham
    ```
 
 2. Edit `devices\<name>\device_config.h` — update `DEVICE_NAME`, `HA_HOST`,

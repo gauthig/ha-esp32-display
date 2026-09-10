@@ -1,14 +1,13 @@
 # HA ESP32 Display
 
 ESP32-S3 touch-panel firmware for Home Assistant. Supports multiple panel
-types — currently an **Energy Monitor**, a **Ham Radio Control Panel**, and a
-combined **Office Panel 7** — across two Waveshare board families. Adding a
-new panel type requires only a device config file; the core WiFi/display/LVGL
-code is shared across all devices.
+types — currently an **Energy Monitor** and a combined **Office Panel 7** —
+across two Waveshare board families. Adding a new panel type requires only a
+device config file; the core WiFi/display/LVGL code is shared across all devices.
 
 **Boards**:
-- Waveshare ESP32-S3-Touch-LCD-4.3 — **non-B variant only** — `energy_4v3_lcd`,
-  `ham_controls` (see [INSTALLATION.md](INSTALLATION.md) for non-B vs B).
+- Waveshare ESP32-S3-Touch-LCD-4.3 — **non-B variant only** — `energy_4v3_lcd`
+  (see [INSTALLATION.md](INSTALLATION.md) for non-B vs B).
 - Waveshare ESP32-S3-Touch-LCD-7B — 1024×600, mounted portrait — `office_panel_7`.
 
 ---
@@ -25,15 +24,9 @@ code is shared across all devices.
 | Header | Clock, connection status dot |
 | Tap a stat card | 7-day line chart (grid or solar) |
 
-### Ham Radio Control Panel (`devices/ham_controls/`)
-
-| Area | Data |
-|------|------|
-| Three tap-to-toggle cards | Radio PSU · Shelly · Palstar Amp |
-| Radio PSU card | Switch state (ON/OFF) + live power draw (W) |
-| Palstar Amp card | Switch state (ON/OFF) + live power draw (W) |
-| Header | Clock, connection status dot |
-| First tap (after dim) | Wakes display only — no accidental toggle |
+> The dedicated **Ham Radio Control Panel** (4.3", `DEVICE_TYPE_HAM_CONTROLS`)
+> was retired — its board died and its three switches now live on the Office
+> Panel 7. `ha_ham.c` is still built there.
 
 ### Office Panel 7 (`devices/office_panel_7/`)
 
@@ -42,7 +35,7 @@ Waveshare **7B** (1024×600) mounted **portrait** (600×1024). A combo panel:
 | Area | Data |
 |------|------|
 | Office Fan Lights card | Grouped `light.office_fan_light_1` + `_2`. State-aware bulb graphic. Tap = toggle both. Long-press = popup with brightness slider + 8 colour swatches, applied to both. |
-| Three HAM switch cards | Radio PSU · Shelly · Palstar Amp (same entities/behaviour as Ham Controls) |
+| Three HAM switch cards | Radio PSU · Shelly · Palstar Amp — tap to toggle, live power on Radio PSU / Palstar |
 | Bottom nav bar | Opens the **ENERGY** screen — portrait re-layout of the Energy Monitor dashboard (tap a card → 7-day chart) |
 | Header | Clock, connection status dot |
 
@@ -53,9 +46,6 @@ Waveshare **7B** (1024×600) mounted **portrait** (600×1024). A combo panel:
 ```powershell
 # Energy Monitor
 .\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
-
-# Ham Controls
-.\tools\flash-device.ps1 -Device ham_controls -Port COM10
 
 # Office Panel 7
 .\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
@@ -70,33 +60,14 @@ See [INSTALLATION.md](INSTALLATION.md) for prerequisites and boot-mode steps.
 
 ```powershell
 . C:\esp\esp-idf\export.ps1
-
-# Energy Monitor
-idf.py -p COM10 monitor
-
-# Ham Controls
-idf.py -p COM10 monitor
+idf.py -p COM10 monitor    # energy_4v3_lcd
+idf.py -p COM25 monitor    # office_panel_7
 ```
 
 Press **RESET** on the board to see the full boot log. Exit with `Ctrl+]`.
 
 > **Tip — port busy?** Kill any stale monitor session first:
 > `Stop-Process -Name python -Force -ErrorAction SilentlyContinue`
-
----
-
-## Switching between panels on the same device
-
-The two device configs use the same hardware. To swap which firmware is on
-the board, simply flash a different device:
-
-```powershell
-# Load Energy Monitor onto the device
-.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
-
-# Load Ham Controls onto the device
-.\tools\flash-device.ps1 -Device ham_controls -Port COM10
-```
 
 ---
 
@@ -112,7 +83,6 @@ several modules at once.
 | `DEVICE_TYPE` constant | UI compiled | Data modules compiled |
 |------------------------|-------------|-----------------------|
 | `DEVICE_TYPE_ENERGY` | `ui.c` (energy dashboard) | `ha_client.c` + `ha_history.c` |
-| `DEVICE_TYPE_HAM_CONTROLS` | `ui_ham.c` (toggle panel) | `ha_ham.c` |
 | `DEVICE_TYPE_OFFICE_PANEL` | `ui_office.c` (7B portrait combo) | `ha_ham.c` + `ha_light.c` + `ha_client.c` + `ha_history.c` |
 
 Core code — WiFi, SNTP, LVGL port — is **always compiled** and shared. The
@@ -122,7 +92,6 @@ board layer is split: `board.c` (4.3" non-B) and `board_7b.c` (7B) are each
 ```
 devices/
   energy_4v3_lcd/       ← DEVICE_TYPE_ENERGY        (Energy Monitor, 4.3" non-B)
-  ham_controls/         ← DEVICE_TYPE_HAM_CONTROLS  (Ham Radio Panel, 4.3" non-B)
   office_panel_7/       ← DEVICE_TYPE_OFFICE_PANEL  (Office Panel 7, 7B portrait)
   NEW_DEVICE_TEMPLATE/  ← copy this to add a new panel
 ```
@@ -157,11 +126,6 @@ devices/
     secrets.h            ← GITIGNORED — WiFi + HA token
     secrets.h.example    ← committed template
     INFO.md              ← location, COM port, circuit table
-  ham_controls/
-    device_config.h      ← HA host, timezone, switch + power entities, DEVICE_TYPE_HAM_CONTROLS
-    secrets.h            ← GITIGNORED — WiFi + HA token
-    secrets.h.example    ← committed template
-    INFO.md              ← location, entity table
   office_panel_7/
     device_config.h      ← 7B board, light + ham + energy entities, DEVICE_TYPE_OFFICE_PANEL
     secrets.h.example    ← committed template
@@ -185,7 +149,6 @@ main/
   ui.h/.c                ← LVGL energy dashboard (landscape) — DEVICE_TYPE_ENERGY
 
   ha_ham.h/.c            ← HA switch toggle + power fetch    — HAS_HAM
-  ui_ham.h/.c            ← LVGL ham radio toggle panel       — DEVICE_TYPE_HAM_CONTROLS
 
   ha_light.h/.c          ← HA grouped-light state + brightness/colour — HAS_LIGHT
   ui_office.h/.c         ← LVGL office panel: home + light popup + portrait energy — DEVICE_TYPE_OFFICE_PANEL

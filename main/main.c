@@ -1,9 +1,8 @@
 /*
- * main.c — HA Energy Display / Ham Radio Control Panel / Office Panel 7
+ * main.c — HA Energy Display / Office Panel 7
  *
  * DEVICE_TYPE (from device_config.h) selects which UI and HA client compile:
  *   DEVICE_TYPE_ENERGY       → energy dashboard (ui.c + ha_client.c)
- *   DEVICE_TYPE_HAM_CONTROLS → ham radio panel  (ui_ham.c + ha_ham.c)
  *   DEVICE_TYPE_OFFICE_PANEL → 7B combo panel   (ui_office.c + ha_ham.c +
  *                              ha_light.c + ha_client.c + ha_history.c)
  *
@@ -41,9 +40,6 @@
 #include "ha_client.h"
 #include "ha_history.h"
 #include "ui.h"
-#elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
-#include "ha_ham.h"
-#include "ui_ham.h"
 #elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
 #include "ha_ham.h"
 #include "ha_light.h"
@@ -95,24 +91,6 @@ static void ha_hist_task(void *arg)
 
 #endif /* HAS_ENERGY */
 
-/* ====================================================== Ham-only state ===== */
-#if DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
-
-/*
- * Toggle request: set from LVGL task (button callback, under lvgl lock).
- * Read and cleared by ha_poll_task on core 0.
- * -1 = no request; 0/1/2 = switch index to toggle.
- */
-static volatile int s_toggle_request = -1;
-
-static void on_toggle_requested(int switch_idx)
-{
-    s_toggle_request = switch_idx;
-    xTaskNotifyGive(s_poll_task);
-}
-
-#endif /* DEVICE_TYPE_HAM_CONTROLS */
-
 /* =================================================== Office-panel state ==== */
 #if DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
 
@@ -157,8 +135,6 @@ static void set_ui_connected(bool connected)
 {
 #if DEVICE_TYPE == DEVICE_TYPE_ENERGY
     ui_set_connected(connected);
-#elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
-    ui_ham_set_connected(connected);
 #elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
     ui_office_set_connected(connected);
 #endif
@@ -252,37 +228,6 @@ static void ha_poll_task(void *arg)
         }
     }
 
-#elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
-
-    ha_ham_data_t data = {};
-    if (ha_ham_fetch(&data) == ESP_OK) {
-        if (lvgl_port_lock(200)) {
-            ui_ham_set_connected(true);
-            ui_ham_update(&data);
-            lvgl_port_unlock();
-        }
-    }
-    while (true) {
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(HA_POLL_INTERVAL_MS));
-
-        int toggle_req = s_toggle_request;
-        if (toggle_req >= 0) {
-            s_toggle_request = -1;
-            ha_ham_toggle(toggle_req);
-            vTaskDelay(pdMS_TO_TICKS(500));
-        }
-        if (ha_ham_fetch(&data) == ESP_OK) {
-            if (lvgl_port_lock(200)) {
-                ui_ham_set_connected(true);
-                ui_ham_update(&data);
-                lvgl_port_unlock();
-            }
-        } else if (lvgl_port_lock(0)) {
-            ui_ham_set_connected(false);
-            lvgl_port_unlock();
-        }
-    }
-
 #elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
 
     ha_ham_data_t   ham   = {};
@@ -361,9 +306,6 @@ void app_main(void)
 #if DEVICE_TYPE == DEVICE_TYPE_ENERGY
         ui_set_chart_request_cb(on_chart_requested);
         ui_init();
-#elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
-        ui_ham_set_toggle_cb(on_toggle_requested);
-        ui_ham_init();
 #elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
         ui_office_set_ham_toggle_cb(on_ham_toggle);
         ui_office_set_light_toggle_cb(on_light_toggle);

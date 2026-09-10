@@ -84,10 +84,13 @@ at a time. See [README.md](README.md) and [INSTALLATION.md](INSTALLATION.md).
 ```
 devices/
   energy_4v3_lcd/      ← Energy Monitor  (DEVICE_TYPE_ENERGY,        4.3" non-B, COM9,  192.168.1.54)
-  ham_controls/        ← Ham Controls    (DEVICE_TYPE_HAM_CONTROLS,  4.3" non-B, COM9,  192.168.1.54)
   office_panel_7/      ← Office Panel 7  (DEVICE_TYPE_OFFICE_PANEL,   7B portrait, COM25, 192.168.1.54)
   NEW_DEVICE_TEMPLATE/ ← copy this to add a board
 ```
+
+The dedicated `ham_controls` 4.3" panel (`DEVICE_TYPE_HAM_CONTROLS`) was
+retired — its 4.3" board died and its three switches moved onto the office
+panel. `ha_ham.c` lives on there via `HAS_HAM`.
 
 ### Device types
 
@@ -99,7 +102,6 @@ modules:
 | Constant | UI | Modules compiled |
 |----------|----|------------------|
 | `DEVICE_TYPE_ENERGY`       | Energy dashboard (`ui.c`)       | `ha_client.c` + `ha_history.c` |
-| `DEVICE_TYPE_HAM_CONTROLS` | Ham radio panel  (`ui_ham.c`)   | `ha_ham.c` |
 | `DEVICE_TYPE_OFFICE_PANEL` | Office panel     (`ui_office.c`) | `ha_ham.c` + `ha_light.c` + `ha_client.c` + `ha_history.c`; board = `board_7b.c` |
 
 Switching devices changes which UI and data-fetchers compile in. Core code
@@ -110,29 +112,15 @@ guarded by `DEVICE_TYPE` so only one `board_display_init()` is linked.
 
 7B portrait combo panel. HOME screen: grouped **Office Fan Lights** card
 (state-aware bulb graphic; tap = toggle both `light.office_fan_light_1/2`,
-long-press = brightness slider + colour swatch popup applied to both), the
-three HAM switch cards (same entities as `ham_controls`), and a bottom nav
-bar to the **ENERGY** screen (portrait re-layout of the `energy_4v3_lcd`
-dashboard, reusing `ha_client.c` / `ha_history.c` unchanged).
+long-press = brightness slider + colour swatch popup applied to both), three
+HAM switch cards (`switch.radio_power_supply`, `switch.shelly1g4_a085e3c0f2c0`,
+`switch.palstar_amp` + their power sensors), and a bottom nav bar to the
+**ENERGY** screen (portrait re-layout of the `energy_4v3_lcd` dashboard,
+reusing `ha_client.c` / `ha_history.c` unchanged).
 
 Flash:
 ```powershell
 .\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
-```
-
-### Ham Controls device
-
-Three tap-to-toggle switch buttons + live power readings:
-
-| Button | Switch entity | Power sensor |
-|--------|--------------|--------------|
-| Radio PSU  | `switch.radio_power_supply` | `sensor.radio_power_supply_power` |
-| Shelly     | `switch.shelly1g4_a085e3c0f2c0` | — |
-| Palstar Amp | `switch.palstar_amp` | `sensor.palstar_amp` |
-
-Flash:
-```powershell
-.\tools\flash-device.ps1 -Device ham_controls -Port COM9
 ```
 
 ## Credentials (never commit)
@@ -167,7 +155,6 @@ All device-specific config (HA host, entity IDs, circuit list) lives in
 | `main/ha_ham.h/.c` | HA switch state + toggle (ham + office) |
 | `main/ha_light.h/.c` | HA grouped-light state + brightness/colour service calls (office) |
 | `main/ui.h/.c` | LVGL 9 energy dashboard (4.3" landscape) |
-| `main/ui_ham.h/.c` | LVGL ham toggle panel (4.3" landscape) |
 | `main/ui_office.h/.c` | LVGL office panel: home + light popup + portrait energy screen |
 | `main/main.c` | WiFi, SNTP, poll task (branches on DEVICE_TYPE) |
 | `partitions.csv` | 2 MB factory slot (binaries ~1.5 MB; default 1 MB fails) |
@@ -184,8 +171,8 @@ All device-specific config (HA host, entity IDs, circuit list) lives in
   in `sdkconfig.defaults` must not be removed.
 - **sdkconfig edits**: if you need to change partition config without a full
   clean, edit the `CONFIG_PARTITION_TABLE_*` lines in `sdkconfig` directly.
-- **4.3" firmware is non-B only**: `energy_4v3_lcd` / `ham_controls` builds
-  must not go on a 4.3B (CH422G) board.
+- **4.3" firmware is non-B only**: the `energy_4v3_lcd` build must not go on a
+  4.3B (CH422G) board.
 - **7B migration** (`office_panel_7`): the 7B is NOT a CH422G board — it uses
   Waveshare's IO_EXTENSION @0x24 (`ws_io_expander.c`). EXIO6 = LCD_VDD_EN
   must be HIGH before RGB init. Portrait is `sw_rotate` + `bb_mode` in

@@ -4,7 +4,7 @@
  * Fetches the state of three HA switches and two power sensors via the
  * /api/template endpoint, and can toggle any switch via /api/services.
  *
- * Compiled only for DEVICE_TYPE_HAM_CONTROLS builds.
+ * Compiled when HAS_HAM is defined (currently DEVICE_TYPE_OFFICE_PANEL).
  */
 #pragma once
 #include <stdbool.h>

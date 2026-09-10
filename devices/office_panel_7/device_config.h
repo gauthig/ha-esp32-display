@@ -33,7 +33,7 @@
 #define LIGHT_ENT_0    "light.office_fan_light_1"
 #define LIGHT_ENT_1    "light.office_fan_light_2"
 
-/* ── HAM switch entities (same three as the ham_controls panel) ─────────── */
+/* ── HAM switch entities (the ham radio station switches) ──────────────── */
 #define HAM_SW_ENT_0   "switch.radio_power_supply"
 #define HAM_SW_ENT_1   "switch.shelly1g4_a085e3c0f2c0"
 #define HAM_SW_ENT_2   "switch.palstar_amp"
