@@ -1,4 +1,4 @@
-# Device: main_house
+# Device: energy_4v3_lcd
 
 | Field | Value |
 |-------|-------|
@@ -30,4 +30,4 @@
 ## Setup
 
 1. Copy `secrets.h.example` → `secrets.h` and fill in WiFi and HA token.
-2. Flash: `.\tools\flash-device.ps1 -Device main_house -Port COM9`
+2. Flash: `.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM9`

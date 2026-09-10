@@ -4,14 +4,14 @@
  * Fetches the state of three HA switches and two power sensors via the
  * /api/template endpoint, and can toggle any switch via /api/services.
  *
- * Compiled only for DEVICE_TYPE_HAM_CONTROLS builds.
+ * Compiled when HAS_HAM is defined (currently DEVICE_TYPE_OFFICE_PANEL).
  */
 #pragma once
 #include <stdbool.h>
 #include "esp_err.h"
 #include "ha_config.h"   /* device_types.h + device_config.h */
 
-#if DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
+#if defined(HAS_HAM)
 
 #define HAM_NUM_SWITCHES 3
 #define HAM_NUM_POWER    2
@@ -34,4 +34,4 @@ esp_err_t ha_ham_fetch(ha_ham_data_t *out);
  */
 esp_err_t ha_ham_toggle(int switch_idx);
 
-#endif /* DEVICE_TYPE_HAM_CONTROLS */
+#endif /* HAS_HAM */

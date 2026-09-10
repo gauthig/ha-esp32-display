@@ -13,7 +13,7 @@
 #include "ha_ham.h"
 #include "ha_config.h"
 
-#if DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
+#if defined(HAS_HAM)
 
 #include <string.h>
 #include <stdlib.h>
@@ -178,4 +178,4 @@ esp_err_t ha_ham_toggle(int switch_idx)
     return ESP_OK;
 }
 
-#endif /* DEVICE_TYPE_HAM_CONTROLS */
+#endif /* HAS_HAM */
