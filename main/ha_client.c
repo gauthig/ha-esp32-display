@@ -18,7 +18,7 @@
 #include "ha_client.h"
 #include "ha_config.h"
 
-#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
+#if defined(HAS_ENERGY)
 
 #include <string.h>
 #include <stdlib.h>
@@ -146,4 +146,4 @@ esp_err_t ha_client_fetch(ha_data_t *out)
     return ESP_OK;
 }
 
-#endif /* DEVICE_TYPE_ENERGY */
+#endif /* HAS_ENERGY */

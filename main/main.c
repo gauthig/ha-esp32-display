@@ -1,13 +1,16 @@
 /*
- * main.c — HA Energy Display / Ham Radio Control Panel
+ * main.c — HA Energy Display / Ham Radio Control Panel / Office Panel 7
  *
  * DEVICE_TYPE (from device_config.h) selects which UI and HA client compile:
  *   DEVICE_TYPE_ENERGY       → energy dashboard (ui.c + ha_client.c)
  *   DEVICE_TYPE_HAM_CONTROLS → ham radio panel  (ui_ham.c + ha_ham.c)
+ *   DEVICE_TYPE_OFFICE_PANEL → 7B combo panel   (ui_office.c + ha_ham.c +
+ *                              ha_light.c + ha_client.c + ha_history.c)
  *
  * Tasks:
  *   core 1 : LVGL task (via esp_lvgl_port, priority 4)
  *   core 0 : ha_poll_task (priority 5) — polls HA every HA_POLL_INTERVAL_MS
+ *   core 0 : ha_hist_task (priority 3) — 7-day history prefetch (energy builds)
  *
  * Startup sequence:
  *   1. NVS + netif
@@ -41,6 +44,12 @@
 #elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
 #include "ha_ham.h"
 #include "ui_ham.h"
+#elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
+#include "ha_ham.h"
+#include "ha_light.h"
+#include "ha_client.h"
+#include "ha_history.h"
+#include "ui_office.h"
 #endif
 
 static const char *TAG = "main";
@@ -48,31 +57,28 @@ static const char *TAG = "main";
 /* --------------------------------------------------------- Poll task handle */
 static TaskHandle_t  s_poll_task;
 
-/* ====================================================== Energy-only state == */
-#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
+/* ============================================= History prefetch (energy) === */
+#if defined(HAS_ENERGY)
 
 /*
  * Cached history updated by ha_hist_task every 10 minutes.
- * Written under lvgl_port_lock; read by on_chart_requested which is already
- * called under the LVGL lock from an event callback.
+ * Written under lvgl_port_lock; read by the chart-request callback which is
+ * already called under the LVGL lock from an event callback.
  */
 static ha_history_t s_hist_cache;
 
-/*
- * Called from the LVGL event callback (already under lvgl_port_lock).
- * Shows the cached chart instantly — no blocking fetch needed.
- */
 static void on_chart_requested(void)
 {
+#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
     ui_show_chart(&s_hist_cache);
+#elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
+    ui_office_show_chart(&s_hist_cache);
+#endif
 }
 
-/*
- * Background task: fetches combined 7-day history every 10 minutes.
- * Runs on core 0 at lower priority than the poll task.
- */
 static void ha_hist_task(void *arg)
 {
+    (void)arg;
     vTaskDelay(pdMS_TO_TICKS(8000));   /* let SNTP sync first */
 
     while (true) {
@@ -87,7 +93,7 @@ static void ha_hist_task(void *arg)
     }
 }
 
-#endif /* DEVICE_TYPE_ENERGY */
+#endif /* HAS_ENERGY */
 
 /* ====================================================== Ham-only state ===== */
 #if DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
@@ -107,21 +113,63 @@ static void on_toggle_requested(int switch_idx)
 
 #endif /* DEVICE_TYPE_HAM_CONTROLS */
 
+/* =================================================== Office-panel state ==== */
+#if DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
+
+/* All set under the LVGL lock from widget callbacks; read + cleared by the
+ * poll task on core 0. */
+static volatile int      s_ham_toggle_request = -1;   /* switch idx, or -1   */
+static volatile int      s_light_req          = 0;    /* 0 none 1 tgl 2 bri 3 rgb */
+static volatile int      s_light_bri_pct      = 0;
+static volatile uint32_t s_light_rgb          = 0;    /* 0x00RRGGBB         */
+
+static void on_ham_toggle(int switch_idx)
+{
+    s_ham_toggle_request = switch_idx;
+    xTaskNotifyGive(s_poll_task);
+}
+static void on_light_toggle(void)
+{
+    s_light_req = 1;
+    xTaskNotifyGive(s_poll_task);
+}
+static void on_light_brightness(int percent)
+{
+    s_light_bri_pct = percent;
+    s_light_req = 2;
+    xTaskNotifyGive(s_poll_task);
+}
+static void on_light_rgb(uint8_t r, uint8_t g, uint8_t b)
+{
+    s_light_rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+    s_light_req = 3;
+    xTaskNotifyGive(s_poll_task);
+}
+
+#endif /* DEVICE_TYPE_OFFICE_PANEL */
+
 /* ----------------------------------------------------------------- WiFi */
 
 static EventGroupHandle_t s_wifi_eg;
 #define WIFI_CONN_BIT BIT0
+
+static void set_ui_connected(bool connected)
+{
+#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
+    ui_set_connected(connected);
+#elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
+    ui_ham_set_connected(connected);
+#elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
+    ui_office_set_connected(connected);
+#endif
+}
 
 static void wifi_event_handler(void *arg, esp_event_base_t base,
                                int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGW(TAG, "WiFi disconnected — reconnecting");
-#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
-        if (lvgl_port_lock(0)) { ui_set_connected(false);     lvgl_port_unlock(); }
-#elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
-        if (lvgl_port_lock(0)) { ui_ham_set_connected(false); lvgl_port_unlock(); }
-#endif
+        if (lvgl_port_lock(0)) { set_ui_connected(false); lvgl_port_unlock(); }
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *evt = (ip_event_got_ip_t *)data;
@@ -178,11 +226,11 @@ static void sntp_start(void)
 
 static void ha_poll_task(void *arg)
 {
+    (void)arg;
+
 #if DEVICE_TYPE == DEVICE_TYPE_ENERGY
 
     ha_data_t data = {};
-
-    /* First fetch immediately */
     if (ha_client_fetch(&data) == ESP_OK) {
         if (lvgl_port_lock(200)) {
             ui_set_connected(true);
@@ -190,29 +238,23 @@ static void ha_poll_task(void *arg)
             lvgl_port_unlock();
         }
     }
-
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(HA_POLL_INTERVAL_MS));
-
         if (ha_client_fetch(&data) == ESP_OK) {
             if (lvgl_port_lock(200)) {
                 ui_set_connected(true);
                 ui_update(&data);
                 lvgl_port_unlock();
             }
-        } else {
-            if (lvgl_port_lock(0)) {
-                ui_set_connected(false);
-                lvgl_port_unlock();
-            }
+        } else if (lvgl_port_lock(0)) {
+            ui_set_connected(false);
+            lvgl_port_unlock();
         }
     }
 
 #elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
 
     ha_ham_data_t data = {};
-
-    /* First fetch immediately */
     if (ha_ham_fetch(&data) == ESP_OK) {
         if (lvgl_port_lock(200)) {
             ui_ham_set_connected(true);
@@ -220,29 +262,80 @@ static void ha_poll_task(void *arg)
             lvgl_port_unlock();
         }
     }
-
     while (true) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(HA_POLL_INTERVAL_MS));
 
         int toggle_req = s_toggle_request;
         if (toggle_req >= 0) {
             s_toggle_request = -1;
-            /* Toggle the switch then immediately re-fetch to update state */
             ha_ham_toggle(toggle_req);
-            vTaskDelay(pdMS_TO_TICKS(500));   /* brief pause for HA to process */
+            vTaskDelay(pdMS_TO_TICKS(500));
         }
-
         if (ha_ham_fetch(&data) == ESP_OK) {
             if (lvgl_port_lock(200)) {
                 ui_ham_set_connected(true);
                 ui_ham_update(&data);
                 lvgl_port_unlock();
             }
-        } else {
-            if (lvgl_port_lock(0)) {
-                ui_ham_set_connected(false);
-                lvgl_port_unlock();
+        } else if (lvgl_port_lock(0)) {
+            ui_ham_set_connected(false);
+            lvgl_port_unlock();
+        }
+    }
+
+#elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
+
+    ha_ham_data_t   ham   = {};
+    ha_light_data_t light = {};
+    ha_data_t       energy = {};
+
+    bool ok_ham   = (ha_ham_fetch(&ham)     == ESP_OK);
+    bool ok_light = (ha_light_fetch(&light) == ESP_OK);
+    bool ok_energy = (ha_client_fetch(&energy) == ESP_OK);
+    if (lvgl_port_lock(200)) {
+        ui_office_set_connected(ok_ham || ok_light || ok_energy);
+        if (ok_ham)    ui_office_update_ham(&ham);
+        if (ok_light)  ui_office_update_light(&light);
+        if (ok_energy) ui_office_update_energy(&energy);
+        lvgl_port_unlock();
+    }
+
+    while (true) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(HA_POLL_INTERVAL_MS));
+
+        /* ---- service pending control requests ---- */
+        int ham_req = s_ham_toggle_request;
+        if (ham_req >= 0) {
+            s_ham_toggle_request = -1;
+            ha_ham_toggle(ham_req);
+            vTaskDelay(pdMS_TO_TICKS(400));
+        }
+
+        int lreq = s_light_req;
+        if (lreq != 0) {
+            s_light_req = 0;
+            if (lreq == 1) {
+                ha_light_toggle();
+            } else if (lreq == 2) {
+                ha_light_set_brightness(s_light_bri_pct);
+            } else if (lreq == 3) {
+                uint32_t c = s_light_rgb;
+                ha_light_set_rgb((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
             }
+            vTaskDelay(pdMS_TO_TICKS(400));
+        }
+
+        /* ---- refetch + push ---- */
+        ok_ham    = (ha_ham_fetch(&ham)       == ESP_OK);
+        ok_light  = (ha_light_fetch(&light)   == ESP_OK);
+        ok_energy = (ha_client_fetch(&energy) == ESP_OK);
+
+        if (lvgl_port_lock(200)) {
+            ui_office_set_connected(ok_ham || ok_light || ok_energy);
+            if (ok_ham)    ui_office_update_ham(&ham);
+            if (ok_light)  ui_office_update_light(&light);
+            if (ok_energy) ui_office_update_energy(&energy);
+            lvgl_port_unlock();
         }
     }
 
@@ -253,7 +346,6 @@ static void ha_poll_task(void *arg)
 
 void app_main(void)
 {
-    /* NVS — required by WiFi driver */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -262,7 +354,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    /* Display + touch + LVGL (core 1) */
     ESP_ERROR_CHECK(board_display_init());
 
     /* Build the UI shell before WiFi — shows "connecting" state */
@@ -273,20 +364,24 @@ void app_main(void)
 #elif DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
         ui_ham_set_toggle_cb(on_toggle_requested);
         ui_ham_init();
+#elif DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
+        ui_office_set_ham_toggle_cb(on_ham_toggle);
+        ui_office_set_light_toggle_cb(on_light_toggle);
+        ui_office_set_light_brightness_cb(on_light_brightness);
+        ui_office_set_light_rgb_cb(on_light_rgb);
+        ui_office_set_chart_request_cb(on_chart_requested);
+        ui_office_init();
 #endif
         lvgl_port_unlock();
     }
 
-    /* WiFi + SNTP */
     wifi_init();
     sntp_start();
 
-    /* Poll task on core 0; save handle for wake-up notifications */
     xTaskCreatePinnedToCore(ha_poll_task, "ha_poll", 8192, NULL, 5,
                             &s_poll_task, 0);
 
-#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
-    /* History prefetch task — runs at lower priority, refreshes every 10 min */
+#if defined(HAS_ENERGY)
     xTaskCreatePinnedToCore(ha_hist_task, "ha_hist", 8192, NULL, 3, NULL, 0);
 #endif
 

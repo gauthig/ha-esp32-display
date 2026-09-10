@@ -11,7 +11,7 @@
 #include "esp_err.h"
 #include "ha_config.h"   /* device_types.h + device_config.h */
 
-#if DEVICE_TYPE == DEVICE_TYPE_HAM_CONTROLS
+#if defined(HAS_HAM)
 
 #define HAM_NUM_SWITCHES 3
 #define HAM_NUM_POWER    2
@@ -34,4 +34,4 @@ esp_err_t ha_ham_fetch(ha_ham_data_t *out);
  */
 esp_err_t ha_ham_toggle(int switch_idx);
 
-#endif /* DEVICE_TYPE_HAM_CONTROLS */
+#endif /* HAS_HAM */

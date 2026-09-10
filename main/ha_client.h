@@ -3,7 +3,7 @@
 #include "esp_err.h"
 #include "ha_config.h"   /* device_types.h + device_config.h */
 
-#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
+#if defined(HAS_ENERGY)
 
 typedef struct {
     float grid_kwh_today;      /* energy imported from grid today (kWh) */
@@ -19,4 +19,4 @@ typedef struct {
 const char **ha_circuit_names(void);
 esp_err_t ha_client_fetch(ha_data_t *out);
 
-#endif /* DEVICE_TYPE_ENERGY */
+#endif /* HAS_ENERGY */

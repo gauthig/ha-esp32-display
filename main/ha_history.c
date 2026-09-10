@@ -18,7 +18,7 @@
 #include "ha_history.h"
 #include "ha_config.h"
 
-#if DEVICE_TYPE == DEVICE_TYPE_ENERGY
+#if defined(HAS_ENERGY)
 
 #include <string.h>
 #include <stdlib.h>
@@ -216,4 +216,4 @@ esp_err_t ha_history_fetch_combined(ha_history_t *out)
     return any_ok ? ESP_OK : ESP_FAIL;
 }
 
-#endif /* DEVICE_TYPE_ENERGY */
+#endif /* HAS_ENERGY */

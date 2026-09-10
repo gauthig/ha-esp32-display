@@ -9,6 +9,12 @@
  * at the cadence of any periodic LVGL timer. (Same invariant as firefly-touch.)
  */
 #include "board.h"
+#include "ha_config.h"
+
+/* The 7B office panel has its own bring-up in board_7b.c (different panel,
+ * IO expander, and orientation). Compile this 4.3" non-B implementation out
+ * for that build so board_display_init() is not defined twice. */
+#if DEVICE_TYPE != DEVICE_TYPE_OFFICE_PANEL
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -219,3 +225,5 @@ esp_err_t board_backlight_set_percent(uint8_t percent)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, BOARD_BACKLIGHT_LEDC_CHANNEL);
     return ESP_OK;
 }
+
+#endif /* DEVICE_TYPE != DEVICE_TYPE_OFFICE_PANEL */

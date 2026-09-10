@@ -11,9 +11,16 @@
 
 ---
 
-## Hardware: non-B vs B
+## Hardware: which board per device
 
-This project targets the **non-B** board. The two look identical but differ:
+| Device | Board | Notes |
+|--------|-------|-------|
+| `energy_4v3_lcd`, `ham_controls` | Waveshare ESP32-S3-Touch-LCD-4.3 **non-B** | `board.c` |
+| `office_panel_7` | Waveshare ESP32-S3-Touch-LCD-7B | `board_7b.c` + `ws_io_expander.c`, portrait |
+
+### 4.3" non-B vs B
+
+The 4.3" builds target the **non-B** board. The two look identical but differ:
 
 | Feature | non-B (this project) | B variant |
 |---------|----------------------|-----------|
@@ -22,6 +29,15 @@ This project targets the **non-B** board. The two look identical but differ:
 | USB-C | UART (CH343P) + native USB | Same |
 
 Using B-variant firmware on non-B (or vice versa) produces a black screen.
+
+### 7B (`office_panel_7`)
+
+Different panel (1024×600), a **Waveshare IO_EXTENSION @ I2C 0x24** (not a
+CH422G), and an extra `EXIO6 = LCD_VDD_EN` that must be HIGH before RGB init.
+Mounted **portrait** — the firmware runs a logical 600×1024 via esp_lvgl_port
+software rotation. All handled in `board_7b.c`; its top-of-file tuning knobs
+(`PCLK_HZ`, `BOUNCE_LINES`, `DRAW_LINES`) are the bench dials if the portrait
+frame flickers. `BOARD_7B_ROTATION` flips 90°↔270° for the mount direction.
 
 ## USB ports on the board
 
@@ -49,6 +65,7 @@ Device configs live in `devices/<name>/device_config.h`. For the two current pan
 |-------|------------|
 | Energy Monitor | `devices\energy_4v3_lcd\device_config.h` |
 | Ham Controls | `devices\ham_controls\device_config.h` |
+| Office Panel 7 | `devices\office_panel_7\device_config.h` |
 
 ### Step 2 — Put device in boot mode
 
@@ -66,9 +83,12 @@ The device is now waiting for the flash tool.
 
 # Ham Controls
 .\tools\flash-device.ps1 -Device ham_controls -Port COM10
+
+# Office Panel 7
+.\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
 ```
 
-Replace `COM10` with whatever port the board enumerated as. To find it:
+Replace the port with whatever the board enumerated as. To find it:
 
 ```powershell
 [System.IO.Ports.SerialPort]::GetPortNames()
@@ -113,6 +133,17 @@ Expected boot log — Ham Controls:
 I main: startup complete — device: Ham Controls
 I wifi: connected with ghome, ...
 I ha_ham: sw=[1,0,1] pwr=[145.0,320.0]
+```
+
+Expected boot log — Office Panel 7:
+
+```
+I board_7b: up: 1024x600 RGB565 → 600x1024 portrait, GT911, LVGL core 1
+I ui_office: Office Panel UI ready (600x1024 portrait)
+I main: startup complete — device: Office Panel 7
+I ha_ham:   sw=[1,0,1] pwr=[145.0,320.0]
+I ha_light: light: on bri=72% rgb=255,214,170
+I ha_client: grid 27.4 kWh | net 434 W | solar 215 W
 ```
 
 ---
@@ -240,6 +271,43 @@ and `HAM_POWER_ENT_*` macros and reflash.
 
 ---
 
+## Configuring the Office Panel 7
+
+Settings live in `devices/office_panel_7/device_config.h`. This device is a
+composite — `DEVICE_TYPE_OFFICE_PANEL` compiles the light, ham, **and** energy
+modules — so its config carries all three sets of macros.
+
+```c
+#define DEVICE_TYPE       DEVICE_TYPE_OFFICE_PANEL  // office UI + all data modules
+#define DEVICE_NAME       "Office Panel 7"
+#define BOARD_VARIANT_7B  1                          // selects board_7b.c
+
+#define HA_HOST           "192.168.1.54"
+#define HA_PORT           8123
+#define HA_POLL_INTERVAL_MS 15000
+#define LOCAL_TZ          "PST8PDT,M3.2.0,M11.1.0"
+
+/* Grouped light — both entities are driven together */
+#define LIGHT_ENT_0  "light.office_fan_light_1"
+#define LIGHT_ENT_1  "light.office_fan_light_2"
+
+/* HAM switches — same three as ham_controls */
+#define HAM_SW_ENT_0 "switch.radio_power_supply"
+#define HAM_SW_ENT_1 "switch.shelly1g4_a085e3c0f2c0"
+#define HAM_SW_ENT_2 "switch.palstar_amp"
+#define HAM_SW_NAMES_INIT "Radio PSU", "Shelly", "Palstar Amp"
+#define HAM_POWER_ENT_0 "sensor.radio_power_supply_power"
+#define HAM_POWER_ENT_1 "sensor.palstar_amp_power"
+
+/* Energy screen — ENT_* + HA_NUM_CIRCUITS + CIRCUIT_* (see Energy Monitor) */
+```
+
+The two light entities are toggled/dimmed/coloured as one: tapping the card
+calls `light.toggle` on both; the long-press popup calls `light.turn_on` with
+`brightness_pct` or `rgb_color` on both.
+
+---
+
 ## Adding a new device
 
 ### Using an existing panel type
@@ -276,8 +344,12 @@ station display, HVAC controller, etc.):
 
 1. **Register the new type** in `main/device_types.h`:
    ```c
-   #define DEVICE_TYPE_MY_PANEL  3
+   #define DEVICE_TYPE_MY_PANEL  4   // 1-3 are taken
    ```
+   If it reuses existing data modules, add it to the feature-macro block in
+   `main/ha_config.h` (e.g. `#define HAS_ENERGY 1`) instead of duplicating a
+   fetcher. A new board needs its own `DEVICE_TYPE`-guarded `board_*.c`
+   implementing the `board.h` API.
 
 2. **Write the HA client** — `main/ha_mypanel.c` and `main/ha_mypanel.h`:
    - Fetches data from HA REST API (`/api/template` or `/api/states/<entity>`)
@@ -289,15 +361,10 @@ station display, HVAC controller, etc.):
    - Refreshes data with `ui_mypanel_update()`
    - Wrap in `#if DEVICE_TYPE == DEVICE_TYPE_MY_PANEL`
 
-4. **Register the source files** in `main/CMakeLists.txt`:
-   ```cmake
-   idf_component_register(
-       SRCS "main.c" "board.c"
-            "ha_client.c" "ha_history.c" "ui.c"
-            "ha_ham.c" "ui_ham.c"
-            "ha_mypanel.c" "ui_mypanel.c"    # ← add these
-       ...
-   ```
+4. **Register the source files** in `main/CMakeLists.txt` — append your
+   `ha_mypanel.c` / `ui_mypanel.c` (and any `board_*.c`) to the `SRCS` list.
+   Every `.c` is always compiled; the `#if` guards make it empty for other
+   device types.
 
 5. **Wire up `main.c`** — add an `#elif` block for the new type:
    ```c
