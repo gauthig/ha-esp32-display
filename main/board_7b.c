@@ -246,16 +246,13 @@ lv_indev_t   *board_get_touch_indev(void) { return s_lv_touch_indev; }
 
 esp_err_t board_backlight_set_percent(uint8_t percent)
 {
-    /* This IO_EXTENSION has a real PWM output (reg 0x05) as well as the
-     * EXIO2 on/off enable, so the 5-minute idle dim is a hardware dim here.
-     * EXIO2 low fully gates DISP (panel standby); keep it high whenever the
-     * backlight is meant to be on at all. */
-    if (percent == 0) {
-        return ws_io_expander_set_pin(BOARD_EXIO_DISP, false);
-    }
-    esp_err_t err = ws_io_expander_set_pin(BOARD_EXIO_DISP, true);
-    if (err != ESP_OK) return err;
-    return ws_io_expander_set_backlight_pct(percent);
+    /* Match firefly-touch board_lcd7b.c exactly: EXIO2 is a plain on/off
+     * output bit and that is the backlight enable on this board (it also
+     * gates DISP, so percent==0 = panel standby). The chip's PWM output
+     * (reg 0x05, ws_io_expander_set_backlight_pct) is a future hardware-dim
+     * improvement — NOT wired in here: writing it on the bench unit left the
+     * panel dark, so on/off only for parity with the proven path. */
+    return ws_io_expander_set_pin(BOARD_EXIO_DISP, percent > 0);
 }
 
 #endif /* DEVICE_TYPE_OFFICE_PANEL */
