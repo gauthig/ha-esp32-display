@@ -12,7 +12,7 @@ device config file; the core WiFi/display/LVGL code is shared across all devices
 
 ## Current panels
 
-### Energy Monitor (`devices/main_house/`)
+### Energy Monitor (`devices/energy_4v3_lcd/`)
 
 | Area | Data |
 |------|------|
@@ -38,7 +38,7 @@ device config file; the core WiFi/display/LVGL code is shared across all devices
 
 ```powershell
 # Energy Monitor
-.\tools\flash-device.ps1 -Device main_house -Port COM10
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
 
 # Ham Controls
 .\tools\flash-device.ps1 -Device ham_controls -Port COM10
@@ -75,7 +75,7 @@ the board, simply flash a different device:
 
 ```powershell
 # Load Energy Monitor onto the device
-.\tools\flash-device.ps1 -Device main_house -Port COM10
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
 
 # Load Ham Controls onto the device
 .\tools\flash-device.ps1 -Device ham_controls -Port COM10
@@ -98,7 +98,7 @@ and shared by all device types.
 
 ```
 devices/
-  main_house/           ← DEVICE_TYPE_ENERGY    (Energy Monitor)
+  energy_4v3_lcd/           ← DEVICE_TYPE_ENERGY    (Energy Monitor)
   ham_controls/         ← DEVICE_TYPE_HAM_CONTROLS (Ham Radio Panel)
   NEW_DEVICE_TEMPLATE/  ← copy this to add a new panel
 ```
@@ -128,7 +128,7 @@ To add a **brand-new panel type** (new UI + new HA client):
 
 ```
 devices/
-  main_house/
+  energy_4v3_lcd/
     device_config.h      ← HA host, timezone, circuit entities, DEVICE_TYPE_ENERGY
     secrets.h            ← GITIGNORED — WiFi + HA token
     secrets.h.example    ← committed template

@@ -23,13 +23,13 @@
 
 .EXAMPLE
     # Build and flash the main house display
-    .\tools\flash-device.ps1 -Device main_house -Port COM9
+    .\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM9
 
     # Build only (no device connected)
     .\tools\flash-device.ps1 -Device garage -BuildOnly
 
     # Flash a pre-built binary (device already selected and built)
-    .\tools\flash-device.ps1 -Device main_house -Port COM9 -FlashOnly
+    .\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM9 -FlashOnly
 #>
 param(
     [Parameter(Mandatory)]

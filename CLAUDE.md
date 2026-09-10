@@ -49,7 +49,7 @@ python -m esptool --chip esp32s3 -p COM9 -b 460800 --before no_reset `
 Or use the helper script (handles boot-mode prompt, build, and flash):
 
 ```powershell
-.\tools\flash-device.ps1 -Device main_house -Port COM9
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM9
 ```
 
 ## Monitor
@@ -72,7 +72,7 @@ at a time. See [README.md](README.md) and [INSTALLATION.md](INSTALLATION.md).
 
 ```
 devices/
-  main_house/          ← Energy Monitor  (DEVICE_TYPE_ENERGY,       COM9, 192.168.1.54)
+  energy_4v3_lcd/          ← Energy Monitor  (DEVICE_TYPE_ENERGY,       COM9, 192.168.1.54)
   ham_controls/        ← Ham Controls    (DEVICE_TYPE_HAM_CONTROLS,  COM9, 192.168.1.54)
   NEW_DEVICE_TEMPLATE/ ← copy this to add a board
 ```

@@ -47,7 +47,7 @@ Device configs live in `devices/<name>/device_config.h`. For the two current pan
 
 | Panel | Config file |
 |-------|------------|
-| Energy Monitor | `devices\main_house\device_config.h` |
+| Energy Monitor | `devices\energy_4v3_lcd\device_config.h` |
 | Ham Controls | `devices\ham_controls\device_config.h` |
 
 ### Step 2 — Put device in boot mode
@@ -62,7 +62,7 @@ The device is now waiting for the flash tool.
 
 ```powershell
 # Energy Monitor
-.\tools\flash-device.ps1 -Device main_house -Port COM10
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
 
 # Ham Controls
 .\tools\flash-device.ps1 -Device ham_controls -Port COM10
@@ -133,7 +133,7 @@ cd ha-esp32-display
 
 ```powershell
 # For Energy Monitor
-copy devices\main_house\secrets.h.example devices\main_house\secrets.h
+copy devices\energy_4v3_lcd\secrets.h.example devices\energy_4v3_lcd\secrets.h
 
 # For Ham Controls
 copy devices\ham_controls\secrets.h.example devices\ham_controls\secrets.h
@@ -155,7 +155,7 @@ Edit each `secrets.h`:
 
 ```powershell
 # Energy Monitor
-.\tools\flash-device.ps1 -Device main_house -Port COM10
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
 
 # Ham Controls
 .\tools\flash-device.ps1 -Device ham_controls -Port COM10
@@ -171,7 +171,7 @@ The script:
 
 ## Configuring the Energy Monitor
 
-All settings live in `devices/main_house/device_config.h`.
+All settings live in `devices/energy_4v3_lcd/device_config.h`.
 
 ```c
 #define DEVICE_TYPE  DEVICE_TYPE_ENERGY   // selects energy UI and HA client
@@ -248,7 +248,7 @@ If the new device is another Energy Monitor or Ham Controls panel:
 
 1. Copy the matching template:
    ```powershell
-   Copy-Item -Recurse devices\main_house devices\garage
+   Copy-Item -Recurse devices\energy_4v3_lcd devices\garage
    # or
    Copy-Item -Recurse devices\ham_controls devices\workshop_ham
    ```
