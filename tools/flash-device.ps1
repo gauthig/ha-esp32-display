@@ -76,12 +76,19 @@ if (-not $FlashOnly) {
     Write-Host ""
     Write-Host "==> Selecting device: $Device" -ForegroundColor Cyan
 
-    Copy-Item $configSrc (Join-Path $mainDir "device_config.h") -Force
+    # Copy-Item preserves the source's LastWriteTime; if that is older than the
+    # build objects, idf.py won't recompile and silently reuses the PREVIOUS
+    # device's firmware. Stamp each copy with "now" to force a real rebuild.
+    $configDst = Join-Path $mainDir "device_config.h"
+    Copy-Item $configSrc $configDst -Force
+    (Get-Item $configDst).LastWriteTime = Get-Date
     Write-Host "    Copied device_config.h"
 
     $secretsSrc = Join-Path $devDir "secrets.h"
     if (Test-Path $secretsSrc) {
-        Copy-Item $secretsSrc (Join-Path $mainDir "secrets.h") -Force
+        $secretsDst = Join-Path $mainDir "secrets.h"
+        Copy-Item $secretsSrc $secretsDst -Force
+        (Get-Item $secretsDst).LastWriteTime = Get-Date
         Write-Host "    Copied secrets.h"
     } elseif (Test-Path (Join-Path $mainDir "secrets.h")) {
         Write-Host "    Using existing main/secrets.h"
