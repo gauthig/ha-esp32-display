@@ -1,6 +1,6 @@
 idf_component_register(
     SRCS "main.c" "board.c" "board_7b.c" "ws_io_expander.c"
-         "ha_client.c" "ha_history.c" "ui.c"
+         "ha_client.c" "ha_history.c" "ha_weather.c" "ui.c"
          "ha_ham.c" "ha_light.c" "ui_office.c"
     INCLUDE_DIRS "."
     REQUIRES

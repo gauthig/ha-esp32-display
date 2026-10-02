@@ -91,6 +91,30 @@ static void ha_hist_task(void *arg)
 
 #endif /* HAS_ENERGY */
 
+/* ============================================== Weather refresh (energy) === */
+#if defined(HAS_WEATHER)
+
+#define WX_REFRESH_MS  (15UL * 60UL * 1000UL)   /* NWS updates ~hourly */
+#define WX_RETRY_MS    (60UL * 1000UL)
+
+static void ha_weather_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(5000));   /* let WiFi + SNTP come up */
+
+    while (true) {
+        ha_weather_t wx;
+        bool ok = (ha_weather_fetch(&wx) == ESP_OK);
+        if (ok && lvgl_port_lock(500)) {
+            ui_weather_update(&wx);
+            lvgl_port_unlock();
+        }
+        vTaskDelay(pdMS_TO_TICKS(ok ? WX_REFRESH_MS : WX_RETRY_MS));
+    }
+}
+
+#endif /* HAS_WEATHER */
+
 /* =================================================== Office-panel state ==== */
 #if DEVICE_TYPE == DEVICE_TYPE_OFFICE_PANEL
 
@@ -325,6 +349,9 @@ void app_main(void)
 
 #if defined(HAS_ENERGY)
     xTaskCreatePinnedToCore(ha_hist_task, "ha_hist", 8192, NULL, 3, NULL, 0);
+#endif
+#if defined(HAS_WEATHER)
+    xTaskCreatePinnedToCore(ha_weather_task, "ha_wx", 8192, NULL, 3, NULL, 0);
 #endif
 
     ESP_LOGI(TAG, "startup complete — device: %s", DEVICE_NAME);

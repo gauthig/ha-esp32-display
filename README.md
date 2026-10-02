@@ -1,7 +1,7 @@
 # HA ESP32 Display
 
 ESP32-S3 touch-panel firmware for Home Assistant. Supports multiple panel
-types — currently an **Energy Monitor** and a combined **Office Panel 7** —
+types — currently a **Weather + Energy Monitor** and a combined **Office Panel 7** —
 across two Waveshare board families. Adding a new panel type requires only a
 device config file; the core WiFi/display/LVGL code is shared across all devices.
 
@@ -14,14 +14,32 @@ device config file; the core WiFi/display/LVGL code is shared across all devices
 
 ## Current panels
 
-### Energy Monitor (`devices/energy_4v3_lcd/`)
+### Weather + Energy Monitor (`devices/energy_4v3_lcd/`)
+
+Boots to the **Weather** screen; **ENERGY ▸** / **◂ WEATHER** buttons in the
+status bars switch between the two.
+
+**Weather screen** (boot default — enabled by `ENT_WEATHER` in `device_config.h`)
+
+| Area | Data |
+|------|------|
+| Header | Location, clock, connection dot, **ENERGY ▸** button |
+| Now | Condition icon + text, temperature, today's high/low, humidity, wind, data source + last update |
+| Next 12 hours | Hour, icon, temperature, chance of rain (blue at ≥ 20 %) |
+| 5-day | Day, icon, high/low, chance of rain |
+
+Data comes from an HA weather entity (`weather.home_nws`, the NWS integration),
+via `GET /api/states/…` plus `weather.get_forecasts` (hourly and twice-daily)
+over REST, refreshed every 15 min.
+
+**Energy screen**
 
 | Area | Data |
 |------|------|
 | Top row | Grid kWh today · Net grid watts (import or solar export) · Solar kWh + watts |
 | Middle | Highest-draw circuit name and wattage |
 | Bottom | Top-5 circuits by current draw with relative power bars |
-| Header | Clock, connection status dot |
+| Header | Clock, connection status dot, **◂ WEATHER** button |
 | Tap a stat card | 7-day line chart (grid or solar) |
 
 > The dedicated **Ham Radio Control Panel** (4.3", `DEVICE_TYPE_HAM_CONTROLS`)
@@ -44,15 +62,17 @@ Waveshare **7B** (1024×600) mounted **portrait** (600×1024). A combo panel:
 ## Quick start — flash an existing panel
 
 ```powershell
-# Energy Monitor
-.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
+# Weather + Energy Monitor
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM8
 
 # Office Panel 7
 .\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
 ```
 
-The script copies the device config, builds, and flashes in one step.
-See [INSTALLATION.md](INSTALLATION.md) for prerequisites and boot-mode steps.
+The script copies the device config, builds, and flashes in one step. esptool
+auto-resets the board into download mode, so normally no BOOT/RESET buttons
+are needed. See [INSTALLATION.md](INSTALLATION.md) for prerequisites and the
+manual boot-mode fallback.
 
 ---
 
@@ -60,7 +80,7 @@ See [INSTALLATION.md](INSTALLATION.md) for prerequisites and boot-mode steps.
 
 ```powershell
 . C:\esp\esp-idf\export.ps1
-idf.py -p COM10 monitor    # energy_4v3_lcd
+idf.py -p COM8 monitor     # energy_4v3_lcd
 idf.py -p COM25 monitor    # office_panel_7
 ```
 
@@ -77,12 +97,13 @@ Each device folder contains a `device_config.h` that sets `DEVICE_TYPE`.
 That constant gates which UI and HA client compile into the binary:
 
 `ha_config.h` then derives feature macros (`HAS_ENERGY` / `HAS_HAM` /
-`HAS_LIGHT`); source files guard on those so a composite device compiles
-several modules at once.
+`HAS_LIGHT` / `HAS_WEATHER`); source files guard on those so a composite
+device compiles several modules at once. `HAS_WEATHER` is opt-in: an energy
+device gets it by defining `ENT_WEATHER` in its `device_config.h`.
 
 | `DEVICE_TYPE` constant | UI compiled | Data modules compiled |
 |------------------------|-------------|-----------------------|
-| `DEVICE_TYPE_ENERGY` | `ui.c` (energy dashboard) | `ha_client.c` + `ha_history.c` |
+| `DEVICE_TYPE_ENERGY` | `ui.c` (weather + energy dashboard) | `ha_client.c` + `ha_history.c` (+ `ha_weather.c` if `ENT_WEATHER`) |
 | `DEVICE_TYPE_OFFICE_PANEL` | `ui_office.c` (7B portrait combo) | `ha_ham.c` + `ha_light.c` + `ha_client.c` + `ha_history.c` |
 
 Core code — WiFi, SNTP, LVGL port — is **always compiled** and shared. The
@@ -91,7 +112,7 @@ board layer is split: `board.c` (4.3" non-B) and `board_7b.c` (7B) are each
 
 ```
 devices/
-  energy_4v3_lcd/       ← DEVICE_TYPE_ENERGY        (Energy Monitor, 4.3" non-B)
+  energy_4v3_lcd/       ← DEVICE_TYPE_ENERGY        (Weather + Energy Monitor, 4.3" non-B)
   office_panel_7/       ← DEVICE_TYPE_OFFICE_PANEL  (Office Panel 7, 7B portrait)
   NEW_DEVICE_TEMPLATE/  ← copy this to add a new panel
 ```
@@ -122,7 +143,7 @@ To add a **brand-new panel type** (new UI + new HA client):
 ```
 devices/
   energy_4v3_lcd/
-    device_config.h      ← HA host, timezone, circuit entities, DEVICE_TYPE_ENERGY
+    device_config.h      ← HA host, timezone, circuit + weather entities, DEVICE_TYPE_ENERGY
     secrets.h            ← GITIGNORED — WiFi + HA token
     secrets.h.example    ← committed template
     INFO.md              ← location, COM port, circuit table
@@ -146,7 +167,8 @@ main/
 
   ha_client.h/.c         ← HA template API (energy data)     — HAS_ENERGY
   ha_history.h/.c        ← HA 7-day kWh history              — HAS_ENERGY
-  ui.h/.c                ← LVGL energy dashboard (landscape) — DEVICE_TYPE_ENERGY
+  ha_weather.h/.c        ← HA weather: current + hourly/twice-daily forecasts — HAS_WEATHER
+  ui.h/.c                ← LVGL weather + energy dashboard (landscape) — DEVICE_TYPE_ENERGY
 
   ha_ham.h/.c            ← HA switch toggle + power fetch    — HAS_HAM
 

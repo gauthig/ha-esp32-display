@@ -46,6 +46,13 @@
                         "_solar_line_1_power_minute_average_net_power"
 #define ENT_SOLAR_KWH   "sensor.solar_line_1_energy_today"
 
+/* ── Optional weather screen ────────────────────────────────────────────── */
+/* Uncomment to add a weather forecast screen as the boot default. Needs an  */
+/* HA weather entity with hourly + twice_daily forecasts (e.g. NWS).         */
+/* #define ENT_WEATHER       "weather.home_nws" */
+/* #define WEATHER_LOCATION  "My Town" */
+/* #define WEATHER_STATION   "KXYZ"   (footer label only; optional) */
+
 /* ── Circuits — TODO: set count, names, and entity IDs ─────────────────── */
 /* Min 1, max 13. All three definitions must have exactly HA_NUM_CIRCUITS    */
 /* entries and be in the same order.                                         */

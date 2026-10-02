@@ -4,6 +4,9 @@
  * Screens:
  *   SCREEN_MAIN  -- status bar, three stat cards, top-consumer, circuit list.
  *   SCREEN_CHART -- 7-day dual-series chart (grid amber + solar green); tap anywhere -> main.
+ *   SCREEN_WEATHER -- (HAS_WEATHER only, boot default) current conditions,
+ *                   next 12 hours, 5-day outlook. "ENERGY >" in its status
+ *                   bar opens SCREEN_MAIN; "< WEATHER" on SCREEN_MAIN returns.
  *
  * TODAY card shows two values side-by-side:
  *   NET   = energy imported from grid today (kWh)     [amber]
@@ -101,8 +104,15 @@ static bool     s_dimmed;
 static uint32_t s_last_activity_tick;
 
 /* -------------------------------------------------------- Screen state -- */
-typedef enum { SCREEN_MAIN, SCREEN_CHART } screen_t;
+typedef enum { SCREEN_MAIN, SCREEN_CHART, SCREEN_WEATHER } screen_t;
 static screen_t s_screen = SCREEN_MAIN;
+
+#if defined(HAS_WEATHER)
+static ha_weather_t s_last_wx;
+static bool         s_has_last_wx;
+static time_t       s_wx_fetched_at;
+static void build_weather_on(lv_obj_t *scr);
+#endif
 
 /* -------------------------------------------------------- Cached data --- */
 static ha_data_t s_last_data;
@@ -205,7 +215,8 @@ static void dimmer_cb(lv_timer_t *t)
 static void clock_tick_cb(lv_timer_t *t)
 {
     (void)t;
-    if (s_screen != SCREEN_MAIN || !s_time_label) return;
+    if ((s_screen != SCREEN_MAIN && s_screen != SCREEN_WEATHER) || !s_time_label)
+        return;
     time_t now;
     time(&now);
     if (now < 1000000UL) {
@@ -218,6 +229,67 @@ static void clock_tick_cb(lv_timer_t *t)
     strftime(buf, sizeof(buf), "%I:%M %p  %a %b %d", &tm);
     lv_label_set_text(s_time_label, buf);
 }
+
+/* ======================================================= Navigation ====== */
+
+static void build_main_on(lv_obj_t *scr);
+
+/* Swap in a freshly built screen and free the old one (same pattern as the
+ * chart screen). Counts as user activity, so the backlight comes back up. */
+static void load_screen(lv_obj_t *scr, screen_t which)
+{
+    lv_obj_t *old = lv_screen_active();
+    lv_screen_load(scr);
+    lv_obj_delete_async(old);
+
+    s_screen = which;
+    s_last_activity_tick = lv_tick_get();
+    s_dimmed = false;
+    board_backlight_set_percent(100);
+}
+
+#if defined(HAS_WEATHER)
+/* Status-bar navigation button: outlined pill, blue label. */
+static lv_obj_t *make_nav_btn(lv_obj_t *parent, const char *txt,
+                              int w, lv_align_t align, int x, int y)
+{
+    lv_obj_t *btn = lv_button_create(parent);
+    lv_obj_set_size(btn, w, 32);
+    lv_obj_align(btn, align, x, y);
+    lv_obj_set_style_bg_color(btn, C_CARD, 0);
+    lv_obj_set_style_bg_color(btn, C_BAR_BG, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(btn, C_BLUE, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_radius(btn, 16, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+
+    lv_obj_t *lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, txt);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl, C_BLUE, 0);
+    lv_obj_center(lbl);
+    return btn;
+}
+
+static void goto_energy_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_t *scr = lv_obj_create(NULL);
+    build_main_on(scr);
+    load_screen(scr, SCREEN_MAIN);
+    if (s_has_last_data) ui_update(&s_last_data);
+}
+
+static void goto_weather_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_t *scr = lv_obj_create(NULL);
+    build_weather_on(scr);
+    load_screen(scr, SCREEN_WEATHER);
+    if (s_has_last_wx) ui_weather_update(&s_last_wx);
+}
+#endif /* HAS_WEATHER */
 
 /* ======================================================= Main screen ===== */
 
@@ -261,6 +333,13 @@ static void build_main_on(lv_obj_t *scr)
     lv_obj_set_style_bg_color(s_status_dot, s_connected ? C_DOT_OK : C_DOT_ERR, 0);
     lv_obj_set_style_bg_opa(s_status_dot, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_status_dot, 0, 0);
+
+#if defined(HAS_WEATHER)
+    /* Between the title and the clock; clock text is ~190 px wide. */
+    lv_obj_t *wx_btn = make_nav_btn(scr, LV_SYMBOL_LEFT " WEATHER", 140,
+                                    LV_ALIGN_TOP_RIGHT, -(PAD + 18 + 200), 4);
+    lv_obj_add_event_cb(wx_btn, goto_weather_cb, LV_EVENT_CLICKED, NULL);
+#endif
 
     lv_obj_t *sep = lv_obj_create(scr);
     lv_obj_set_pos(sep, 0, 40);
@@ -570,16 +649,352 @@ load:
     s_last_activity_tick = lv_tick_get();
 }
 
+/* ======================================================= Weather screen === */
+#if defined(HAS_WEATHER)
+
+#ifndef WEATHER_STATION
+#define WEATHER_STATION ""
+#endif
+
+#define C_SUN     lv_color_hex(0xf2c94c)
+#define C_MOON    lv_color_hex(0xc9d1d9)
+#define C_CLOUD   lv_color_hex(0x8b949e)
+#define C_RAIN    C_BLUE
+#define C_STORM   C_AMBER
+
+/* Weather-screen geometry */
+#define WX_CUR_Y   48
+#define WX_CUR_H   168
+#define WX_HR_Y    (WX_CUR_Y + WX_CUR_H + PAD)
+#define WX_HR_H    124
+#define WX_DAY_Y   (WX_HR_Y + WX_HR_H + PAD)
+#define WX_DAY_H   (SCR_H - WX_DAY_Y - PAD)
+#define WX_IN_W    (SCR_W - PAD*2 - 20)          /* card content width */
+#define WX_HR_COL  (WX_IN_W / WX_HOURS)
+#define WX_DAY_COL (WX_IN_W / WX_DAYS)
+#define WX_POP_HI  20                             /* % shown in blue */
+
+static lv_obj_t *s_wx_icon;
+static lv_obj_t *s_wx_temp;
+static lv_obj_t *s_wx_cond;
+static lv_obj_t *s_wx_hilo;
+static lv_obj_t *s_wx_hum;
+static lv_obj_t *s_wx_wind;
+static lv_obj_t *s_wx_updated;
+static struct { lv_obj_t *hour, *icon, *temp, *pop; } s_wx_hr[WX_HOURS];
+static struct { lv_obj_t *dow,  *icon, *hilo, *pop; } s_wx_day[WX_DAYS];
+
+/* Plain filled shape; not clickable so presses fall through to the screen
+ * (which is what wakes the backlight). */
+static lv_obj_t *wx_shape(lv_obj_t *parent, int x, int y, int w, int h,
+                          lv_color_t col, int radius)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_pos(o, x, y);
+    lv_obj_set_size(o, w, h);
+    lv_obj_set_style_bg_color(o, col, 0);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(o, radius, 0);
+    lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    return o;
+}
+
+/* Cloud: a wide rounded base with a bump on top, in an s×s box. */
+static void wx_cloud(lv_obj_t *box, int s, int y_off)
+{
+    wx_shape(box, s * 8 / 100, y_off + s * 40 / 100, s * 84 / 100, s * 30 / 100,
+             C_CLOUD, s * 15 / 100);
+    wx_shape(box, s * 28 / 100, y_off + s * 20 / 100, s * 40 / 100, s * 40 / 100,
+             C_CLOUD, LV_RADIUS_CIRCLE);
+}
+
+/* Redraw a condition icon into an existing s×s container. */
+static void wx_draw_icon(lv_obj_t *box, wx_cond_t c, int s)
+{
+    lv_obj_clean(box);
+    switch (c) {
+    case WX_SUNNY:
+        wx_shape(box, s / 8, s / 8, s * 3 / 4, s * 3 / 4, C_SUN, LV_RADIUS_CIRCLE);
+        break;
+    case WX_CLEAR_NIGHT:   /* crescent: moon disc with a card-coloured bite */
+        wx_shape(box, s / 8, s / 8, s * 3 / 4, s * 3 / 4, C_MOON, LV_RADIUS_CIRCLE);
+        wx_shape(box, s * 3 / 8, 0, s * 5 / 8, s * 5 / 8, C_CARD, LV_RADIUS_CIRCLE);
+        break;
+    case WX_PARTLY:
+        wx_shape(box, s * 40 / 100, s * 5 / 100, s * 52 / 100, s * 52 / 100,
+                 C_SUN, LV_RADIUS_CIRCLE);
+        wx_cloud(box, s, s * 15 / 100);
+        break;
+    case WX_CLOUDY:
+        wx_cloud(box, s, s * 5 / 100);
+        break;
+    case WX_RAIN:
+    case WX_SNOW:
+        wx_cloud(box, s, -s * 8 / 100);
+        for (int i = 0; i < 3; i++) {
+            int x = s * (25 + i * 22) / 100;
+            if (c == WX_RAIN)
+                wx_shape(box, x, s * 70 / 100, LV_MAX(2, s / 16), s * 22 / 100,
+                         C_RAIN, 1);
+            else
+                wx_shape(box, x, s * 72 / 100, s / 8, s / 8, C_TXT, LV_RADIUS_CIRCLE);
+        }
+        break;
+    case WX_STORM: {
+        wx_cloud(box, s, -s * 8 / 100);
+        lv_obj_t *bolt = lv_label_create(box);
+        lv_label_set_text(bolt, LV_SYMBOL_CHARGE);
+        lv_obj_set_style_text_font(bolt,
+            s >= 64 ? &lv_font_montserrat_32 : &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(bolt, C_STORM, 0);
+        lv_obj_align(bolt, LV_ALIGN_BOTTOM_MID, 0, 0);
+        break;
+    }
+    case WX_WIND:
+        for (int i = 0; i < 3; i++)
+            wx_shape(box, s * (10 + i * 10) / 100, s * (25 + i * 22) / 100,
+                     s * (70 - i * 15) / 100, LV_MAX(3, s / 12), C_CLOUD, 2);
+        break;
+    default: {
+        lv_obj_t *q = lv_label_create(box);
+        lv_label_set_text(q, "?");
+        lv_obj_set_style_text_font(q, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(q, C_TXT2, 0);
+        lv_obj_center(q);
+        break;
+    }
+    }
+}
+
+static lv_obj_t *wx_icon_box(lv_obj_t *parent, int x, int y, int s)
+{
+    lv_obj_t *box = lv_obj_create(parent);
+    lv_obj_remove_style_all(box);
+    lv_obj_set_pos(box, x, y);
+    lv_obj_set_size(box, s, s);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    return box;
+}
+
+/* Centred label inside a column [col_x, col_x + col_w). */
+static lv_obj_t *wx_col_label(lv_obj_t *parent, int col_x, int col_w, int y,
+                              const lv_font_t *font, lv_color_t col)
+{
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, "--");
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_style_text_color(l, col, 0);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(l, col_w);
+    lv_obj_set_pos(l, col_x, y);
+    return l;
+}
+
+static lv_obj_t *wx_card(lv_obj_t *scr, int y, int h)
+{
+    lv_obj_t *c = make_card(scr, PAD, y, SCR_W - PAD*2, h);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE);
+    return c;
+}
+
+static void build_weather_on(lv_obj_t *scr)
+{
+    lv_obj_set_style_bg_color(scr, C_BG, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(scr, screen_press_cb, LV_EVENT_PRESSED, NULL);
+
+    /* ---- Status bar: title | clock | dot | ENERGY > ------------ */
+    make_label(scr, LV_SYMBOL_HOME " WEATHER  \xE2\x80\xA2  " WEATHER_LOCATION,
+               &lv_font_montserrat_20, C_BLUE,
+               LV_ALIGN_TOP_LEFT, PAD + 2, 10);
+
+    lv_obj_t *en_btn = make_nav_btn(scr, "ENERGY " LV_SYMBOL_RIGHT, 130,
+                                    LV_ALIGN_TOP_RIGHT, -PAD, 4);
+    lv_obj_add_event_cb(en_btn, goto_energy_cb, LV_EVENT_CLICKED, NULL);
+
+    s_status_dot = lv_obj_create(scr);
+    lv_obj_set_size(s_status_dot, 12, 12);
+    lv_obj_align(s_status_dot, LV_ALIGN_TOP_RIGHT, -(PAD + 130 + 10), 14);
+    lv_obj_set_style_radius(s_status_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_status_dot, s_connected ? C_DOT_OK : C_DOT_ERR, 0);
+    lv_obj_set_style_bg_opa(s_status_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_status_dot, 0, 0);
+    lv_obj_clear_flag(s_status_dot, LV_OBJ_FLAG_CLICKABLE);
+
+    s_time_label = make_label(scr, "--:-- --  --- --- --",
+                              &lv_font_montserrat_16, C_TXT2,
+                              LV_ALIGN_TOP_RIGHT, -(PAD + 130 + 10 + 20), 12);
+
+    lv_obj_t *sep = wx_shape(scr, 0, 40, SCR_W, 1, C_BORDER, 0);
+    (void)sep;
+
+    /* ---- Current conditions ------------------------------------ */
+    lv_obj_t *cur = wx_card(scr, WX_CUR_Y, WX_CUR_H);
+    make_label(cur, "NOW", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, 0, 0);
+    s_wx_icon = wx_icon_box(cur, 6, 30, 100);
+
+    s_wx_temp = make_label(cur, "--\xC2\xB0", &lv_font_montserrat_48, C_TXT,
+                           LV_ALIGN_TOP_LEFT, 130, 14);
+    s_wx_cond = make_label(cur, "--", &lv_font_montserrat_24, C_TXT,
+                           LV_ALIGN_TOP_LEFT, 130, 74);
+    s_wx_hilo = make_label(cur, "H --\xC2\xB0   L --\xC2\xB0", &lv_font_montserrat_20,
+                           C_TXT2, LV_ALIGN_TOP_LEFT, 130, 110);
+
+    s_wx_hum  = make_label(cur, LV_SYMBOL_TINT "  Humidity  --", &lv_font_montserrat_20,
+                           C_TXT, LV_ALIGN_TOP_LEFT, 470, 22);
+    s_wx_wind = make_label(cur, "Wind  --", &lv_font_montserrat_20,
+                           C_TXT, LV_ALIGN_TOP_LEFT, 470, 60);
+    s_wx_updated = make_label(cur, "Waiting for NWS data...", &lv_font_montserrat_14,
+                              C_TXT2, LV_ALIGN_TOP_LEFT, 470, 112);
+
+    /* ---- Next 12 hours ------------------------------------------ */
+    lv_obj_t *hr = wx_card(scr, WX_HR_Y, WX_HR_H);
+    make_label(hr, "NEXT 12 HOURS", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, 0, 0);
+    for (int i = 0; i < WX_HOURS; i++) {
+        int x = i * WX_HR_COL;
+        s_wx_hr[i].hour = wx_col_label(hr, x, WX_HR_COL, 20, &lv_font_montserrat_14, C_TXT2);
+        s_wx_hr[i].icon = wx_icon_box(hr, x + (WX_HR_COL - 28) / 2, 38, 28);
+        s_wx_hr[i].temp = wx_col_label(hr, x, WX_HR_COL, 68, &lv_font_montserrat_16, C_TXT);
+        s_wx_hr[i].pop  = wx_col_label(hr, x, WX_HR_COL, 88, &lv_font_montserrat_14, C_TXT2);
+    }
+
+    /* ---- 5-day outlook ------------------------------------------ */
+    lv_obj_t *dy = wx_card(scr, WX_DAY_Y, WX_DAY_H);
+    make_label(dy, "5-DAY", &lv_font_montserrat_14, C_TXT2,
+               LV_ALIGN_TOP_LEFT, 0, 0);
+    for (int i = 0; i < WX_DAYS; i++) {
+        int x = i * WX_DAY_COL;
+        s_wx_day[i].dow  = wx_col_label(dy, x, WX_DAY_COL, 4,  &lv_font_montserrat_16, C_TXT);
+        s_wx_day[i].icon = wx_icon_box(dy, x + (WX_DAY_COL - 34) / 2, 26, 34);
+        s_wx_day[i].hilo = wx_col_label(dy, x, WX_DAY_COL, 64, &lv_font_montserrat_16, C_TXT);
+        s_wx_day[i].pop  = wx_col_label(dy, x, WX_DAY_COL, 86, &lv_font_montserrat_14, C_TXT2);
+    }
+}
+
+static void fmt_temp(char *buf, size_t n, int16_t t)
+{
+    if (t == INT16_MIN) snprintf(buf, n, "--\xC2\xB0");
+    else                snprintf(buf, n, "%d\xC2\xB0", t);
+}
+
+static const char *compass(int bearing)
+{
+    static const char *pts[16] = { "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                                   "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW" };
+    return pts[((bearing * 10 + 112) / 225) % 16];
+}
+
+static void set_pop(lv_obj_t *lbl, int8_t pop)
+{
+    if (pop < 0) {
+        lv_label_set_text(lbl, "");
+        return;
+    }
+    lv_label_set_text_fmt(lbl, LV_SYMBOL_TINT " %d%%", pop);
+    lv_obj_set_style_text_color(lbl, pop >= WX_POP_HI ? C_RAIN : C_TXT2, 0);
+}
+
+void ui_weather_update(const ha_weather_t *wx)
+{
+    if (!wx->valid) return;
+
+    if (wx != &s_last_wx) {
+        s_last_wx       = *wx;
+        s_has_last_wx   = true;
+        s_wx_fetched_at = time(NULL);
+    }
+    if (s_screen != SCREEN_WEATHER) return;
+
+    char a[16], b[16];
+
+    /* Current */
+    wx_draw_icon(s_wx_icon, wx->cond, 100);
+    fmt_temp(a, sizeof(a), wx->temp);
+    lv_label_set_text(s_wx_temp, a);
+    lv_label_set_text(s_wx_cond, ha_weather_cond_label(wx->cond));
+    fmt_temp(a, sizeof(a), wx->today_hi);
+    fmt_temp(b, sizeof(b), wx->today_lo);
+    lv_label_set_text_fmt(s_wx_hilo, "H %s   L %s", a, b);
+
+    if (wx->humidity >= 0)
+        lv_label_set_text_fmt(s_wx_hum, LV_SYMBOL_TINT "  Humidity  %d%%", wx->humidity);
+    else
+        lv_label_set_text(s_wx_hum, LV_SYMBOL_TINT "  Humidity  --");
+
+    if (wx->wind_mph < 0)
+        lv_label_set_text(s_wx_wind, "Wind  --");
+    else if (wx->wind_mph == 0 || wx->wind_bearing < 0)
+        lv_label_set_text_fmt(s_wx_wind, "Wind  %s",
+                              wx->wind_mph == 0 ? "calm" : "--");
+    else
+        lv_label_set_text_fmt(s_wx_wind, "Wind  %s %d mph",
+                              compass(wx->wind_bearing), wx->wind_mph);
+
+    if (s_wx_fetched_at > 1000000000) {
+        struct tm tm;
+        localtime_r(&s_wx_fetched_at, &tm);
+        strftime(a, sizeof(a), "%I:%M %p", &tm);
+        lv_label_set_text_fmt(s_wx_updated, "NWS " WEATHER_STATION
+                              "  \xE2\x80\xA2  updated %s", a[0] == '0' ? a + 1 : a);
+    }
+
+    /* Hourly */
+    for (int i = 0; i < WX_HOURS; i++) {
+        if (i >= wx->n_hourly) {
+            lv_label_set_text(s_wx_hr[i].hour, "");
+            lv_label_set_text(s_wx_hr[i].temp, "");
+            lv_label_set_text(s_wx_hr[i].pop, "");
+            lv_obj_clean(s_wx_hr[i].icon);
+            continue;
+        }
+        const wx_hour_t *h = &wx->hourly[i];
+        int h12 = h->hour % 12 ? h->hour % 12 : 12;
+        lv_label_set_text_fmt(s_wx_hr[i].hour, "%d%s", h12, h->hour < 12 ? "a" : "p");
+        wx_draw_icon(s_wx_hr[i].icon, h->cond, 28);
+        fmt_temp(a, sizeof(a), h->temp);
+        lv_label_set_text(s_wx_hr[i].temp, a);
+        set_pop(s_wx_hr[i].pop, h->pop);
+    }
+
+    /* Daily */
+    for (int i = 0; i < WX_DAYS; i++) {
+        if (i >= wx->n_daily) {
+            lv_label_set_text(s_wx_day[i].dow, "");
+            lv_label_set_text(s_wx_day[i].hilo, "");
+            lv_label_set_text(s_wx_day[i].pop, "");
+            lv_obj_clean(s_wx_day[i].icon);
+            continue;
+        }
+        const wx_day_t *d = &wx->daily[i];
+        lv_label_set_text(s_wx_day[i].dow, i == 0 ? "Today" : d->dow);
+        wx_draw_icon(s_wx_day[i].icon, d->cond, 34);
+        fmt_temp(a, sizeof(a), d->hi);
+        fmt_temp(b, sizeof(b), d->lo);
+        lv_label_set_text_fmt(s_wx_day[i].hilo, "%s / %s", a, b);
+        set_pop(s_wx_day[i].pop, d->pop);
+    }
+}
+
+#endif /* HAS_WEATHER */
+
 /* ======================================================= ui_init ========= */
 
 void ui_init(void)
 {
     s_last_activity_tick = lv_tick_get();
     s_dimmed = false;
-    s_screen = SCREEN_MAIN;
-
     lv_obj_t *scr = lv_screen_active();
+#if defined(HAS_WEATHER)
+    s_screen = SCREEN_WEATHER;          /* weather is the boot default */
+    build_weather_on(scr);
+#else
+    s_screen = SCREEN_MAIN;
     build_main_on(scr);
+#endif
 
     lv_timer_create(clock_tick_cb, 1000, NULL);
     lv_timer_create(dimmer_cb, 10000, NULL);
@@ -710,7 +1125,7 @@ void ui_update(const ha_data_t *d)
 void ui_set_connected(bool connected)
 {
     s_connected = connected;
-    if (s_screen == SCREEN_MAIN && s_status_dot)
+    if ((s_screen == SCREEN_MAIN || s_screen == SCREEN_WEATHER) && s_status_dot)
         lv_obj_set_style_bg_color(s_status_dot,
                                   connected ? C_DOT_OK : C_DOT_ERR, 0);
 }
