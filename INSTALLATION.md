@@ -63,22 +63,24 @@ Device configs live in `devices/<name>/device_config.h`:
 
 | Panel | Config file |
 |-------|------------|
-| Energy Monitor | `devices\energy_4v3_lcd\device_config.h` |
+| Weather + Energy Monitor | `devices\energy_4v3_lcd\device_config.h` |
 | Office Panel 7 | `devices\office_panel_7\device_config.h` |
 
-### Step 2 — Put device in boot mode
+### Step 2 — Boot mode (usually not needed)
+
+esptool resets the ESP32-S3 into download mode over USB by itself
+(`--before default_reset`), so normally you can skip this step. Only if
+flashing fails with `No serial data received`, enter boot mode manually:
 
 1. Hold the **BOOT** button (GPIO0)
 2. Tap the **RESET** (RST/EN) button
 3. Release **BOOT**
 
-The device is now waiting for the flash tool.
-
 ### Step 3 — Build and flash
 
 ```powershell
-# Energy Monitor
-.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
+# Weather + Energy Monitor
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM8
 
 # Office Panel 7
 .\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
@@ -101,8 +103,10 @@ automatically. If not, press **RESET** once.
 |-------|-----|
 | `Could not open COMx` | Port not yet assigned — check Device Manager |
 | `PermissionError 13` | Another process owns the port — run `Stop-Process -Name python -Force -ErrorAction SilentlyContinue` |
-| `No serial data received` (boot mode) | Re-enter boot mode: hold BOOT → tap RESET → release BOOT |
-| `No serial data received` (normal reset) | Drop `-before no_reset` — let esptool reset the chip |
+| `No serial data received` (auto-reset) | Enter boot mode manually: hold BOOT → tap RESET → release BOOT, then flash with `--before no_reset` |
+| `No serial data received` (`--before no_reset`) | The board isn't in boot mode. Use `--before default_reset` to let esptool reset the chip, or re-enter boot mode |
+| `idf.py` not recognized / `export.ps1` fails with "expression after '.'" | ESP-IDF's Python venv lost its base Python (e.g. after a Python upgrade moved it). Fix `home`/`executable` in `%USERPROFILE%\.espressif\python_env\idf5.5_py3.14_env\pyvenv.cfg`, or re-run the ESP-IDF installer |
+| Build output identical after switching devices | `Copy-Item` kept an old timestamp on `main\device_config.h`. Touch it (`(Get-Item main\device_config.h).LastWriteTime = Get-Date`) and rebuild |
 
 ---
 
@@ -110,17 +114,18 @@ automatically. If not, press **RESET** once.
 
 ```powershell
 . C:\esp\esp-idf\export.ps1
-idf.py -p COM10 monitor
+idf.py -p COM8 monitor
 ```
 
 Press **RESET** on the board to see the full boot sequence. Exit with `Ctrl+]`.
 
-Expected boot log — Energy Monitor:
+Expected boot log — Weather + Energy Monitor:
 
 ```
+I ui: UI ready
 I main: startup complete — device: Main House
-I wifi: connected with ghome, ...
 I ha_client: grid 27.4 kWh | net 434 W | solar 215 W
+I ha_weather: 61 F Clear | 12 hourly / 5 daily (cur=1 hr=1 day=1)
 ```
 
 Expected boot log — Office Panel 7:
@@ -170,8 +175,8 @@ Edit each `secrets.h`:
 ### 3. Build and flash
 
 ```powershell
-# Energy Monitor
-.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM10
+# Weather + Energy Monitor
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM8
 
 # Office Panel 7
 .\tools\flash-device.ps1 -Device office_panel_7 -Port COM25
@@ -212,6 +217,25 @@ All settings live in `devices/energy_4v3_lcd/device_config.h`.
     "{{ states('sensor.pool_power') }}|" \
     ...
 ```
+
+### Weather screen (optional, boot default)
+
+Defining `ENT_WEATHER` turns on `HAS_WEATHER`: the device boots to a weather
+screen (now / next 12 hours / 5-day) with an **ENERGY ▸** button, and the
+energy screen gets a **◂ WEATHER** button.
+
+```c
+#define ENT_WEATHER       "weather.home_nws"   // HA weather entity
+#define WEATHER_LOCATION  "Apple Valley"       // header label
+#define WEATHER_STATION   "KVCV"               // footer label (optional)
+```
+
+The entity must support **hourly** and **twice-daily** forecasts. The NWS
+integration does (Settings → Devices & services → Add integration → National
+Weather Service, then enter your lat/long and an observation station). Pick a
+full **ASOS** station: some small-airport **AWOS** stations, such as KAPV, report
+no sky or weather text, and HA then shows the current condition as "Unknown".
+Remove the three lines to build the energy-only firmware.
 
 ### No solar?
 
@@ -291,8 +315,10 @@ If the new device reuses an existing panel type (e.g. another Energy Monitor):
 
 ### Adding a brand-new panel type
 
-Follow these steps to add a panel type that doesn't exist yet (e.g., a weather
-station display, HVAC controller, etc.):
+Follow these steps to add a panel type that doesn't exist yet (e.g., an HVAC
+controller). For an optional screen on an existing type, prefer the
+`HAS_WEATHER` pattern instead: an opt-in macro in `device_config.h` gates a new
+`HAS_*` feature in `ha_config.h`.
 
 1. **Register the new type** in `main/device_types.h`:
    ```c

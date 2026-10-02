@@ -30,4 +30,15 @@ void ui_set_chart_request_cb(void (*cb)(void));
  */
 void ui_show_chart(const ha_history_t *hist);
 
+#if defined(HAS_WEATHER)
+#include "ha_weather.h"
+
+/*
+ * Cache a weather snapshot and redraw the weather screen if it is showing.
+ * The weather screen is the boot default when HAS_WEATHER is set.
+ * Must be called under the LVGL port lock.
+ */
+void ui_weather_update(const ha_weather_t *wx);
+#endif
+
 #endif /* DEVICE_TYPE_ENERGY */

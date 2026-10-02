@@ -1,8 +1,9 @@
 # ha-energy-display
 
-ESP32-S3 energy dashboard pulling live data from Home Assistant via the
-REST template API, displayed on a Waveshare **ESP32-S3-Touch-LCD-4.3**
-(**non-B** variant — no CH422G, LEDC backlight on GPIO 2).
+ESP32-S3 Home Assistant wall panels (weather, energy, office controls)
+pulling live data from HA over its REST API. The original board is a Waveshare
+**ESP32-S3-Touch-LCD-4.3** (**non-B** variant — no CH422G, LEDC backlight on
+GPIO 2).
 
 ## Hardware
 
@@ -36,38 +37,43 @@ esp_lcd_touch_gt911 1.2.0). Subsequent builds are incremental.
 
 ## Flash procedure (Windows — use esptool directly)
 
-`idf.py flash` is unreliable on Windows without manual boot mode. Always use
-the esptool command directly or `tools/flash-device.ps1`.
+`idf.py flash` is unreliable on Windows. Use esptool directly or
+`tools/flash-device.ps1`.
 
-**Step 1 — enter boot mode on the device:**
-1. Hold BOOT button
-2. Tap RESET button
-3. Release BOOT button
-
-**Step 2 — flash (run immediately after step 1):**
+**Default — auto-reset (no buttons):** esptool's `default_reset` drops the
+S3 into download mode over USB and `hard_reset` reboots it afterwards
+(verified on `energy_4v3_lcd`, 2026-10-02):
 
 ```powershell
 . C:\esp\esp-idf\export.ps1
-python -m esptool --chip esp32s3 -p COM9 -b 460800 --before no_reset `
+python -m esptool --chip esp32s3 -p COM8 -b 460800 `
+    --before default_reset --after hard_reset `
     write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m `
     0x0    build\bootloader\bootloader.bin `
     0x8000 build\partition_table\partition-table.bin `
     0x10000 build\ha_esp32_display.bin
 ```
 
-**Step 3 — press RESET to boot normally.**
+**Fallback — manual boot mode** (if auto-reset fails with
+`No serial data received`): hold BOOT, tap RESET, release BOOT, then run the
+same command with `--before no_reset`, and press RESET afterwards.
 
-Or use the helper script (handles boot-mode prompt, build, and flash):
+Or use the helper script (copies the device config, builds, and flashes):
 
 ```powershell
-.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM9
+.\tools\flash-device.ps1 -Device energy_4v3_lcd -Port COM8
 ```
+
+> **Stale-build gotcha:** `Copy-Item` preserves the source file's timestamp,
+> so after switching devices `idf.py build` can silently reuse the previous
+> device's objects. When copying `devices/<name>/device_config.h` into `main/`
+> by hand, touch it afterwards (`(Get-Item main\device_config.h).LastWriteTime = Get-Date`).
 
 ## Monitor
 
 ```powershell
 . C:\esp\esp-idf\export.ps1
-idf.py -p COM9 monitor   # press RESET on device to see boot log; exit Ctrl+]
+idf.py -p COM8 monitor   # press RESET on device to see boot log; exit Ctrl+]
 ```
 
 If you get `PermissionError 13` on the COM port, kill stale Python monitor processes:
@@ -83,7 +89,7 @@ at a time. See [README.md](README.md) and [INSTALLATION.md](INSTALLATION.md).
 
 ```
 devices/
-  energy_4v3_lcd/      ← Energy Monitor  (DEVICE_TYPE_ENERGY,        4.3" non-B, COM9,  192.168.1.54)
+  energy_4v3_lcd/      ← Weather + Energy (DEVICE_TYPE_ENERGY,       4.3" non-B, COM8,  192.168.1.54)
   office_panel_7/      ← Office Panel 7  (DEVICE_TYPE_OFFICE_PANEL,   7B portrait, COM25, 192.168.1.54)
   NEW_DEVICE_TEMPLATE/ ← copy this to add a board
 ```
@@ -101,8 +107,16 @@ modules:
 
 | Constant | UI | Modules compiled |
 |----------|----|------------------|
-| `DEVICE_TYPE_ENERGY`       | Energy dashboard (`ui.c`)       | `ha_client.c` + `ha_history.c` |
+| `DEVICE_TYPE_ENERGY`       | Weather (boot default, if `ENT_WEATHER`) + energy dashboard (`ui.c`) | `ha_client.c` + `ha_history.c` (+ `ha_weather.c` when `HAS_WEATHER`) |
 | `DEVICE_TYPE_OFFICE_PANEL` | Office panel     (`ui_office.c`) | `ha_ham.c` + `ha_light.c` + `ha_client.c` + `ha_history.c`; board = `board_7b.c` |
+
+`HAS_WEATHER` is opt-in: an energy device that defines `ENT_WEATHER` (and
+`WEATHER_LOCATION`) in its `device_config.h` gets a weather screen as the boot
+default (current conditions, next 12 h, 5-day), with `ENERGY >` / `< WEATHER`
+buttons in the status bars. `energy_4v3_lcd` uses `weather.home_nws` (HA NWS
+integration, observation station KVCV), refreshed every 15 min by
+`ha_weather_task`. KAPV (closer) was tried first but is an AWOS that reports
+no condition text, so HA showed "Unknown".
 
 Switching devices changes which UI and data-fetchers compile in. Core code
 (WiFi, SNTP) stays static; `board.c` (4.3") and `board_7b.c` (7B) are each
@@ -154,7 +168,8 @@ All device-specific config (HA host, entity IDs, circuit list) lives in
 | `main/ha_client.h/.c` | HA template API fetch and parse (energy) |
 | `main/ha_ham.h/.c` | HA switch state + toggle (ham + office) |
 | `main/ha_light.h/.c` | HA grouped-light state + brightness/colour service calls (office) |
-| `main/ui.h/.c` | LVGL 9 energy dashboard (4.3" landscape) |
+| `main/ha_weather.h/.c` | HA weather entity: current state + `weather.get_forecasts` (hourly, twice_daily) via REST `?return_response`; 64 KB PSRAM buffer, cJSON |
+| `main/ui.h/.c` | LVGL 9 energy dashboard + weather screen (4.3" landscape) |
 | `main/ui_office.h/.c` | LVGL office panel: home + light popup + portrait energy screen |
 | `main/main.c` | WiFi, SNTP, poll task (branches on DEVICE_TYPE) |
 | `partitions.csv` | 2 MB factory slot (binaries ~1.5 MB; default 1 MB fails) |

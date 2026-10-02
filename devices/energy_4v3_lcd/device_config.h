@@ -29,6 +29,14 @@
                         "_solar_line_1_power_minute_average_net_power"
 #define ENT_SOLAR_KWH   "sensor.solar_line_1_energy_today"
 
+/* ── Weather screen (boot default) ──────────────────────────────────────── */
+/* Defining ENT_WEATHER enables HAS_WEATHER (ha_weather.c + the weather      */
+/* screen in ui.c). Forecast is the NWS grid for home; current conditions   */
+/* come from WEATHER_STATION (KVCV: full ASOS; KAPV reports no conditions). */
+#define ENT_WEATHER       "weather.home_nws"
+#define WEATHER_LOCATION  "Apple Valley"
+#define WEATHER_STATION   "KVCV"
+
 /* ── Circuits ───────────────────────────────────────────────────────────── */
 /* Keep HA_NUM_CIRCUITS, CIRCUIT_NAMES_INIT, and CIRCUIT_ENTITIES_TEMPLATE  */
 /* all the same length and in the same order.                                */
